@@ -239,4 +239,5 @@ def scan_sector():
 if __name__ == "__main__":
     scan_sector()
     # ⚠️ NOTE: We REMOVED the "while True" loop.
+
     # GitHub will run this script ONCE every 30 mins. It doesn't need to loop itself.
