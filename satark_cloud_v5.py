@@ -27,38 +27,38 @@ except Exception as e:
 
 LAND_MAP_PATH = "land_map.tif"
 
-# 🌍 1. PAN-INDIA BOUNDS (For Data Harvest)
+# 🌍 1. PAN-INDIA BOUNDS
 INDIA_LAT_MIN, INDIA_LAT_MAX = 6.0, 37.0
 INDIA_LON_MIN, INDIA_LON_MAX = 68.0, 97.0
 INDIA_BOUNDS_STR = f"{INDIA_LON_MIN},{INDIA_LAT_MIN},{INDIA_LON_MAX},{INDIA_LAT_MAX}"
 
-# 🎯 2. KILL BOX: WEST BENGAL (For Alerts)
+# 🎯 2. KILL BOX: WEST BENGAL
 WB_LAT_MIN, WB_LAT_MAX = 21.5, 27.3
 WB_LON_MIN, WB_LON_MAX = 85.8, 89.9
 
 # ==========================================
-# 🗺️ ZONING LOGIC (Research Tags)
+# 🗺️ ZONING LOGIC
 # ==========================================
 def get_research_zone(lat, lon):
-    """Tags the fire for your Research Paper"""
     if lat > 28.0: return "ZONE_A_NORTH"      # Punjab/Haryana
-    if (20.0 <= lat <= 28.0) and (lon > 84.0): return "ZONE_B_EAST" # WB/Bihar
+    if (20.0 <= lat <= 28.0) and (lon > 84.0): return "ZONE_B_EAST" # WB
     if lat < 20.0: return "ZONE_C_SOUTH"      # South India
     return "ZONE_D_CENTRAL"
 
 # ==========================================
-# ☁️ CLOUD DATABASE LAYER (Supabase)
+# ☁️ CLOUD DATABASE LAYER
 # ==========================================
 def save_fire_event(lat, lon, source, cluster_size, zone):
-    """
-    Saves fire to Supabase with the new 'location' tag.
-    """
-    # Area Estimation Logic
-    if "MODIS" in source: base_pixel = 1000000     # 1km pixel
-    elif "HIMAWARI" in source: base_pixel = 4000000 # 2km pixel
-    else: base_pixel = 140000                      # VIIRS (375m pixel)
+    # 🛑 FORCE FIX: Ensure cluster_size is at least 1
+    size = max(1, int(cluster_size))
     
-    est_area = (base_pixel * cluster_size) * 0.15 
+    # Area Calculation
+    if "MODIS" in source: base_pixel = 1000000     
+    elif "HIMAWARI" in source: base_pixel = 4000000 
+    else: base_pixel = 140000                      
+    
+    # The Math: (Pixel Size * Number of Pixels) * 15% Stubble Factor
+    est_area = (base_pixel * size) * 0.15 
     
     lat_r, lon_r = round(lat, 3), round(lon, 3)
     fire_id = f"{lat_r}_{lon_r}"
@@ -72,7 +72,6 @@ def save_fire_event(lat, lon, source, cluster_size, zone):
     }
 
     try:
-        # Check if fire exists
         check_url = f"{SUPABASE_URL}/rest/v1/fires?id=eq.{fire_id}&select=alert_count"
         response = requests.get(check_url, headers=headers)
         existing_data = response.json()
@@ -96,7 +95,7 @@ def save_fire_event(lat, lon, source, cluster_size, zone):
                 "alert_count": 1,
                 "source": source,
                 "est_area_m2": est_area,
-                "location": zone  # <--- The New Column!
+                "location": zone 
             }
             requests.post(f"{SUPABASE_URL}/rest/v1/fires", headers=headers, json=new_payload)
             return True, 1, est_area
@@ -106,7 +105,7 @@ def save_fire_event(lat, lon, source, cluster_size, zone):
         return False, 0, est_area
 
 # ==========================================
-# 🌍 TRUTH LAYER (Map Check - WB Only)
+# 🌍 TRUTH LAYER (Map Check)
 # ==========================================
 def check_land_type(lat, lon):
     if not (WB_LAT_MIN <= lat <= WB_LAT_MAX and WB_LON_MIN <= lon <= WB_LON_MAX):
@@ -128,7 +127,7 @@ def check_land_type(lat, lon):
     except: return "UNKNOWN"
 
 # ==========================================
-# 🧠 AI ANALYST (WB Only)
+# 🧠 AI ANALYST
 # ==========================================
 def analyze_fire_event(lat, lon, land_type, area):
     try:
@@ -156,10 +155,9 @@ def send_telegram(message):
 # ==========================================
 def scan_sector():
     print(f"\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
-    print(f"☁️  SATARK V7.1 (5-SAT ARRAY) | INDIA SCAN | {datetime.now()}")
+    print(f"☁️  SATARK V7.3 (AREA FIX) | INDIA SCAN | {datetime.now()}")
     print(f"▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬")
     
-    # THE FULL ARSENAL
     satellites = {
         "VIIRS_NOAA20": f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{NASA_KEY}/VIIRS_NOAA20_NRT/{INDIA_BOUNDS_STR}/1",
         "VIIRS_SNPP":   f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOUNDS_STR}/1",
@@ -178,7 +176,6 @@ def scan_sector():
                 continue
 
             df.columns = [c.lower() for c in df.columns]
-            # Normalize Columns (Himawari uses different names sometimes)
             if 'latitude' not in df.columns: 
                 if 'lat' in df.columns: df.rename(columns={'lat': 'latitude', 'lon': 'longitude'}, inplace=True)
                 else: continue
@@ -192,7 +189,7 @@ def scan_sector():
         except: continue
 
     if not found_fires:
-        print("\n   ✅ INDIA SECTOR CLEAR (ALL SATELLITES).")
+        print("\n   ✅ INDIA SECTOR CLEAR.")
         return
 
     # FUSION
@@ -200,30 +197,34 @@ def scan_sector():
     merged['lat_r'] = merged['latitude'].round(2) 
     merged['lon_r'] = merged['longitude'].round(2)
     
+    # 🟢 THE FIX IS HERE:
+    # Instead of counting 'brightness' (which doesn't exist), we count 'latitude'
+    # 'latitude' exists in every single row, so this count will NEVER be 0.
     unique_clusters = merged.groupby(['lat_r', 'lon_r']).agg({
-        'latitude': 'mean', 'longitude': 'mean', 'source': 'first', 'brightness': 'count'
+        'latitude': 'count', 
+        'source': 'first'
     }).reset_index()
-    unique_clusters.rename(columns={'brightness': 'cluster_size'}, inplace=True)
+    
+    # Rename 'latitude' count to 'cluster_size'
+    unique_clusters.rename(columns={'latitude': 'cluster_size'}, inplace=True)
+    
+    # Retrieve mean Lat/Lon for saving
+    coords = merged.groupby(['lat_r', 'lon_r'])[['latitude', 'longitude']].mean().reset_index()
+    final_data = pd.merge(unique_clusters, coords, on=['lat_r', 'lon_r'])
 
-    print(f"\n   🔻 PROCESSING {len(unique_clusters)} CLUSTERS...")
+    print(f"\n   🔻 PROCESSING {len(final_data)} CLUSTERS...")
 
-    for _, fire in unique_clusters.iterrows():
+    for _, fire in final_data.iterrows():
         lat, lon = fire['latitude'], fire['longitude']
         source, size = fire['source'], fire['cluster_size']
         
-        # 1. TAG ZONE
         zone = get_research_zone(lat, lon)
-        
-        # 2. SAVE TO CLOUD (Research Data - All India)
         is_new, alert_count, area_m2 = save_fire_event(lat, lon, source, size, zone)
 
-        # 3. ALERT LOGIC (Filter for West Bengal ONLY)
         is_critical_wb = (zone == "ZONE_B_EAST") and (WB_LAT_MIN <= lat <= WB_LAT_MAX)
 
         if is_critical_wb:
             print(f"   🔥 CRITICAL WB TARGET: {lat:.3f}, {lon:.3f}")
-            
-            # Check Land Map (Only for WB)
             land_type = check_land_type(lat, lon)
             
             if land_type == "URBAN":
@@ -234,7 +235,6 @@ def scan_sector():
                 print("       🔇 STATUS: MUTED (Recurring)")
                 continue
                 
-            # Generate AI Alert
             ai_msg = analyze_fire_event(lat, lon, land_type, int(area_m2))
             
             msg = (f"🔥 AGNI ALERT (WB)\n{ai_msg}\n"
@@ -243,7 +243,6 @@ def scan_sector():
                    f"🔗 http://maps.google.com/?q={lat},{lon}")
             send_telegram(msg)
             time.sleep(1)
-            
         else:
             print(f"   📝 LOGGED: {zone} (No Alert)")
 
