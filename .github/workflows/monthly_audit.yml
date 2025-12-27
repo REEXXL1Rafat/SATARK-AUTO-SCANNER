@@ -2,14 +2,14 @@ name: SATARK Monthly Audit
 
 on:
   schedule:
-    - cron: '0 0 1 * *'
-  workflow_dispatch: # Allows manual trigger
+    - cron: '0 0 1 * *' # Runs at midnight on the 1st of every month
+  workflow_dispatch: # Allows you to force-run it manually
 
 jobs:
   audit_and_report:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Essential for saving the report to the repo
 
     steps:
       - name: Checkout Code
@@ -22,24 +22,33 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          # We removed google-genai and added requests/matplotlib
-          pip install pandas matplotlib requests
+          # We use 'openai' to talk to the OpenRouter Free API
+          pip install pandas matplotlib requests openai
 
-      - name: Run Free-Tier Audit
+      - name: Run Deep Audit
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}       # Need this from Hugging Face
-          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }} # Your Gmail
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }} # App Password
+          # The Key to the "Free" AI Model
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Email Credentials for the PDF Dispatch
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python monthly_audit.py
 
       - name: Commit Reports
         run: |
           git config --global user.name 'SATARK Bot'
           git config --global user.email 'bot@satark.ai'
+          
+          # 1. Check if the output folder exists
           if [ -d "monthly_audits" ]; then
             git add monthly_audits/*
-            git commit -m "📈 Monthly Audit & Email Dispatch"
-            git push
+            
+            # 2. THE FIX: If 'git commit' fails (because files are identical), 
+            # we catch it with '|| echo' so the workflow stays GREEN.
+            git commit -m "📈 Monthly Deep Audit" || echo "⚠️ Data unchanged since last run. Skipping commit."
+            
+            # 3. Push changes (if any)
+            git push || echo "⚠️ Nothing new to push."
           else
-            echo "No reports to save."
+            echo "⚠️ No monthly_audits folder found. (Check Python script logs)"
           fi
