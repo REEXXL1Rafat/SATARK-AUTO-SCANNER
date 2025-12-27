@@ -1,0 +1,47 @@
+name: SATARK Monthly Audit
+
+on:
+  schedule:
+    - cron: '0 0 1 * *' # Midnight on the 1st of every month
+  workflow_dispatch: # Manual override button
+
+jobs:
+  audit_and_report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Critical Stack
+        run: |
+          pip install pandas matplotlib google-generativeai requests
+
+      - name: Run Cognitive Historian
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python monthly_audit.py
+
+      - name: Commit Intelligence Brief
+        run: |
+          git config --global user.name 'SATARK Auditor'
+          git config --global user.email 'audit@satark.ai'
+          
+          # Only commit if files were actually generated
+          if [ -d "monthly_audits" ]; then
+            git add monthly_audits/*
+            git commit -m "📈 Monthly Strategic Audit: $(date +'%Y-%m')"
+            git push
+          else
+            echo "No audit data found to commit."
+            exit 0
+          fi
