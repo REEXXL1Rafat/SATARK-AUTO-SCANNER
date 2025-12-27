@@ -6,8 +6,6 @@ from datetime import datetime, timedelta
 # 1. SETUP CREDENTIALS
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-# CHECK THIS: Is your table named 'fires' or 'fire_alerts'? 
-# I have set it to 'fire_alerts' as per standard. Change if needed.
 TABLE_NAME = "fires" 
 
 def fetch_and_clean():
@@ -23,9 +21,8 @@ def fetch_and_clean():
         "Authorization": f"Bearer {SUPABASE_KEY}"
     }
 
-    # We select rows created in the last 7 days
-    # NOTE: If your database uses 'acq_date' or 'first_seen', change 'created_at' below.
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}?select=*&created_at=gte.{last_week.isoformat()}"
+    # --- CRITICAL FIX: Pointing to 'first_seen' instead of 'created_at' ---
+    url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}?select=*&first_seen=gte.{last_week.isoformat()}"
     
     try:
         response = requests.get(url, headers=headers)
@@ -36,27 +33,21 @@ def fetch_and_clean():
         return
 
     if not data:
-        print("✅ No fires detected this week. Skipping report.")
+        print("✅ No fires detected in the last 7 days. Skipping report.")
         return
 
-    # 4. CREATE DATAFRAME (Fixed logic)
+    # 4. CREATE DATAFRAME
     df = pd.DataFrame(data)
-    print(f"📥 Downloaded {len(df)} raw logs.")
+    print(f"📥 Downloaded {len(df)} raw logs from Supabase.")
 
-    # 5. STANDARDIZE COLUMNS
-    # Safety: Supabase might send 'latitude', but we need 'lat'
-    if 'latitude' in df.columns:
-        df.rename(columns={'latitude': 'lat', 'longitude': 'lon'}, inplace=True)
-
-    # 6. APPLY "IRON DOME" CLEANING
+    # 5. APPLY "IRON DOME" CLEANING (Using your 'lon' column)
     if 'lon' in df.columns:
-        # Filter Myanmar/Andaman (Keep only West of 92.5E)
         clean_df = df[df['lon'] < 92.5].copy()
     else:
-        print("⚠️ Warning: 'lon' column missing. Skipping geographic filter.")
+        print("⚠️ 'lon' column not found, skipping geo-filter.")
         clean_df = df.copy()
 
-    # 7. APPLY ZONING
+    # 6. APPLY ZONING (Your logic)
     def assign_zone(row):
         lat, lon = row.get('lat', 0), row.get('lon', 0)
         if 28.0 <= lat <= 32.5 and 73.0 <= lon <= 77.5: return "ZONE_A_NORTH"
@@ -67,14 +58,14 @@ def fetch_and_clean():
 
     clean_df['research_zone'] = clean_df.apply(assign_zone, axis=1)
 
-    # 8. SAVE REPORT
+    # 7. SAVE REPORT
     if not os.path.exists('weekly_reports'):
         os.makedirs('weekly_reports')
         
     filename = f"weekly_reports/intel_{today.strftime('%Y-%m-%d')}.csv"
     clean_df.to_csv(filename, index=False)
     
-    print(f"💎 Report Generated: {filename} | Rows: {len(clean_df)}")
+    print(f"💎 SUCCESS: Report Generated: {filename} | Rows: {len(clean_df)}")
 
 if __name__ == "__main__":
     fetch_and_clean()
