@@ -1,0 +1,39 @@
+name: SATARK Weekly Historian
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Midnight every Sunday
+  workflow_dispatch: # Allows manual click for testing
+
+jobs:
+  report_generation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Crucial: Allows the bot to save the CSV
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: pip install pandas requests
+
+      - name: Run The Historian
+        env:
+          # We use the SAME secrets you already set up
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python weekly_intel.py
+
+      - name: Save Report to Repo
+        run: |
+          git config --global user.name 'SATARK Bot'
+          git config --global user.email 'bot@satark.ai'
+          git add weekly_reports/*.csv
+          git commit -m "📊 Weekly Intel Report" || echo "No report generated"
+          git push
