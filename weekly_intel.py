@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # 1. SETUP CREDENTIALS (From GitHub Secrets)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-TABLE_NAME = "fires_rows" # Or 'fire_logs', make sure this matches DB
+TABLE_NAME = "fires" # Or 'fire_logs', make sure this matches DB
 
 def fetch_and_clean():
     print(f"🕵️ WEEKLY INTEL BOT | {datetime.now()}")
