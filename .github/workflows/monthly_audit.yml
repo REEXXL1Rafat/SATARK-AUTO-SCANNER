@@ -3,7 +3,7 @@ name: SATARK Monthly Audit
 on:
   schedule:
     - cron: '0 0 1 * *' # Midnight on the 1st of every month
-  workflow_dispatch: # Manual override button
+  workflow_dispatch: # Allows you to trigger this manually right now
 
 jobs:
   audit_and_report:
@@ -22,7 +22,8 @@ jobs:
 
       - name: Install Critical Stack
         run: |
-          pip install pandas matplotlib google-generativeai requests
+          # Upgrading to the NEW production SDK
+          pip install pandas matplotlib google-genai requests
 
       - name: Run Cognitive Historian
         env:
@@ -36,7 +37,7 @@ jobs:
           git config --global user.name 'SATARK Auditor'
           git config --global user.email 'audit@satark.ai'
           
-          # Only commit if files were actually generated
+          # Only commit if the monthly_audits folder was created
           if [ -d "monthly_audits" ]; then
             git add monthly_audits/*
             git commit -m "📈 Monthly Strategic Audit: $(date +'%Y-%m')"
