@@ -35,7 +35,7 @@ def fetch_and_clean():
         print("✅ No fires detected this week. Skipping report.")
         return
 
-    df = pd.read_json(pd.io.json.dumps(data))
+   df = pd.DataFrame(data)
     print(f"📥 Downloaded {len(df)} raw logs.")
 
     # 4. APPLY "IRON DOME" CLEANING
