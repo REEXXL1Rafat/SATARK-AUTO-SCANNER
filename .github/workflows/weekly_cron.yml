@@ -3,20 +3,20 @@ name: SATARK Weekly Historian
 on:
   schedule:
     - cron: '0 0 * * 0' # Midnight every Sunday
-  workflow_dispatch: # Allows manual click for testing
+  workflow_dispatch: # Allows manual button click
 
 jobs:
   report_generation:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Crucial: Allows the bot to save the CSV
+      contents: write # Essential for the bot to push the CSV back to the repo
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -25,15 +25,23 @@ jobs:
 
       - name: Run The Historian
         env:
-          # We use the SAME secrets you already set up
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python weekly_intel.py
 
       - name: Save Report to Repo
         run: |
-          git config --global user.name 'SATARK Bot'
-          git config --global user.email 'bot@satark.ai'
-          git add weekly_reports/*.csv
-          git commit -m "📊 Weekly Intel Report" || echo "No report generated"
-          git push
+          # 1. Setup Identity
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          
+          # 2. Check for the specific directory and CSV files
+          if [ -d "weekly_reports" ] && [ "$(ls -A weekly_reports/*.csv 2>/dev/null)" ]; then
+            echo "✅ New report detected. Committing to repository..."
+            git add weekly_reports/*.csv
+            git commit -m "📊 Weekly Intel Report: $(date +'%Y-%m-%d')"
+            git push
+          else
+            echo "⚠️ No new report generated (likely due to zero fire detections). Staying Green."
+            exit 0
+          fi
