@@ -17,7 +17,7 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 
 # Email Config (Gmail App Password)
-RECIPIENT_EMAIL = "reezaaalarafat@gmail.com"
+RECIPIENT_EMAIL = "reezaalarafat@gmail.com"
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 
