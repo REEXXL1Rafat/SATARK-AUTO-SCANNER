@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-from openai import OpenAI # We use this to talk to OpenRouter
+from openai import OpenAI
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -9,9 +9,9 @@ from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime
 import glob
-import json
+import time
 
-# 1. SETUP OPENROUTER (The "Free Access" Gateway)
+# 1. SETUP OPENROUTER (The Resilient Gateway)
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ.get("OPENROUTER_API_KEY"),
@@ -40,14 +40,41 @@ def send_intel_email(report_path, map_path):
                 part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(path)}")
                 msg.attach(part)
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(SENDER_EMAIL, GMAIL_PASSWORD)
-        server.send_message(msg)
-    print("✅ Email Sent.")
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(SENDER_EMAIL, GMAIL_PASSWORD)
+            server.send_message(msg)
+        print("✅ Email Sent.")
+    except Exception as e:
+        print(f"❌ Email Failed: {e}")
+
+def get_ai_analysis(prompt):
+    """
+    Tries Llama 3.3 first. If it fails, falls back to Phi-3.
+    """
+    models = [
+        "meta-llama/llama-3.3-70b-instruct:free",  # Primary: The Beast
+        "microsoft/phi-3-medium-128k-instruct:free", # Backup: The Reliable
+        "mistralai/mistral-7b-instruct:free"       # Last Resort
+    ]
+    
+    for model in models:
+        print(f"🤖 Attempting analysis with {model}...")
+        try:
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return completion.choices[0].message.content
+        except Exception as e:
+            print(f"⚠️ {model} failed: {e}. Switching to backup...")
+            time.sleep(2) # Breath before retry
+            
+    return "ANALYSIS FAILED: All AI models are currently overloaded."
 
 def run_monthly_audit():
-    print("🚀 SATARK V9.0 (OpenRouter Edition): STARTING...")
+    print("🚀 SATARK V10.0 (Resilient Edition): STARTING...")
     
     # 2. DATA AGGREGATION
     files = glob.glob("weekly_reports/*.csv")
@@ -57,11 +84,9 @@ def run_monthly_audit():
 
     master_df = pd.concat([pd.read_csv(f) for f in files]).drop_duplicates(subset=['id'])
     
-    # 3. MULTI-DIMENSIONAL CALCULATIONS
+    # 3. CALCULATIONS
     master_df['ha'] = master_df['est_area_m2'] / 10000
-    # Economic Loss (INR)
     master_df['loss_inr'] = master_df.apply(lambda x: x['ha']*370000 if x['research_zone']=="ZONE_A_NORTH" else x['ha']*58000, axis=1)
-    # CO2 Estimate (Approx 20 tonnes per hectare for crop fires)
     master_df['co2_tonnes'] = master_df['ha'] * 20 
     
     # 4. MAP GENERATION
@@ -74,14 +99,13 @@ def run_monthly_audit():
     map_filename = f"monthly_audits/MAP_{datetime.now().strftime('%Y-%m')}.png"
     plt.savefig(map_filename, dpi=300, bbox_inches='tight'); plt.close()
 
-    # 5. DEEP ANALYSIS (Via OpenRouter)
+    # 5. DEEP ANALYSIS
     total_loss_cr = master_df['loss_inr'].sum() / 10000000
     total_co2 = master_df['co2_tonnes'].sum()
     zone_breakdown = master_df.groupby('research_zone').size().to_dict()
 
     prompt = f"""
     ACT AS: Chief Strategy Officer for Climate Defense.
-    
     INPUT DATA:
     - Month: {datetime.now().strftime('%B %Y')}
     - Total Fires: {len(master_df)}
@@ -89,31 +113,15 @@ def run_monthly_audit():
     - Ecological Load: {total_co2:.1f} Tonnes of CO2
     - Zone Breakdown: {zone_breakdown}
 
-    TASK: Write a Multi-Dimensional Strategic Report.
-    
-    DIMENSION 1: FINANCIAL IMPACT
-    - Analyze the ₹{total_loss_cr:.2f} Cr loss. Is this sustainable? 
-    
-    DIMENSION 2: PUBLIC HEALTH & ECOLOGY
-    - Discuss the impact of {total_co2:.1f} Tonnes of CO2 on local populations (AQI impact).
-    
-    DIMENSION 3: STRATEGIC INTERVENTION
-    - Recommend 2 specific, high-tech interventions for the worst-hit zone.
+    TASK: Write a Strategic Report.
+    1. FINANCIAL IMPACT: Is the ₹{total_loss_cr:.2f} Cr loss sustainable? 
+    2. PUBLIC HEALTH: Impact of {total_co2:.1f} Tonnes of CO2.
+    3. INTERVENTION: Recommend 2 high-tech solutions.
 
-    OUTPUT FORMAT: Professional Markdown. Use Headers. No fluff.
+    OUTPUT FORMAT: Markdown.
     """
 
-    print("🤖 OpenRouter (Gemini/Llama) is analyzing...")
-    try:
-        # We ask for the 'free' Gemini 2.0 Flash model
-        # If unavailable, you can swap string to 'meta-llama/llama-3.3-70b-instruct:free'
-        completion = client.chat.completions.create(
-            model="google/gemini-2.0-flash-exp:free", 
-            messages=[{"role": "user", "content": prompt}]
-        )
-        report_text = completion.choices[0].message.content
-    except Exception as e:
-        report_text = f"ANALYSIS FAILED: {e}"
+    report_text = get_ai_analysis(prompt)
 
     # 6. ARCHIVE & SEND
     report_filename = f"monthly_audits/REPORT_{datetime.now().strftime('%Y-%m')}.md"
