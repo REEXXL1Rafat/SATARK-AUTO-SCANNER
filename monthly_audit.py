@@ -1,136 +1,190 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
-from openai import OpenAI
+import requests
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime
-import glob
-import time
+from openai import OpenAI
 
-# 1. SETUP OPENROUTER (The Resilient Gateway)
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY"),
-)
-
-# Email Secrets
-RECIPIENT_EMAIL = "reezaalarafat@gmail.com"
+# ==========================================
+# 🔐 CONFIGURATION
+# ==========================================
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY") # <--- Llama needs this
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+RECIPIENT_EMAIL = "reezaalarafat@gmail.com"
 
-def send_intel_email(report_path, map_path):
-    if not SENDER_EMAIL or not GMAIL_PASSWORD: return
-    print("📧 Sending Dispatch...")
+# AI Client (OpenRouter)
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
+
+def fetch_monthly_data():
+    print("📡 Fetching Monthly Data from Supabase...")
+    headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    
+    # Get 1st day of current month
+    today = datetime.now()
+    first_day = today.replace(day=1, hour=0, minute=0, second=0).isoformat()
+    
+    # Fetch all fires active this month
+    url = f"{SUPABASE_URL}/rest/v1/fires?select=*&last_seen=gte.{first_day}"
+    
+    try:
+        r = requests.get(url, headers=headers)
+        data = r.json()
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        print(f"❌ DB Error: {e}")
+        return pd.DataFrame()
+
+def apply_thesis_physics(df):
+    """
+    CONVERTS SATELLITE WATTS -> REAL WORLD EMISSIONS
+    Citation: Wooster et al. (2005), Andreae (2019)
+    """
+    if df.empty: return df
+    
+    # 1. DATA CLEANING
+    if 'frp_mw' not in df.columns: df['frp_mw'] = 0.0
+    
+    # 2. PHYSICS CALCULATION
+    # Energy (MJ) = MW * Duration (Assuming 1 hr snapshot = 3600s)
+    df['energy_mj'] = df['frp_mw'] * 3600 
+    
+    # Biomass Burnt (Tonnes) = MJ * 0.368 (Combustion Coefficient) / 1000
+    df['biomass_tonnes'] = (df['energy_mj'] * 0.368) / 1000
+    
+    # 3. EMISSION ESTIMATES (Ag Residue Factors)
+    df['co2_tonnes'] = df['biomass_tonnes'] * 1.585
+    df['pm25_kg'] = df['biomass_tonnes'] * 6.26
+    
+    return df
+
+def get_ai_report(stats):
+    """
+    Uses Llama 3.3 to write a Thesis-Grade Ecological Report.
+    """
+    try:
+        prompt = f"""
+        ACT AS: Senior Atmospheric Physicist & Ecologist.
+        
+        INPUT DATA (West Bengal Sector, {datetime.now().strftime('%B %Y')}):
+        - Total Fire Events: {stats['count']}
+        - Peak Thermal Intensity: {stats['max_mw']:.1f} MW
+        - Estimated Biomass Incinerated: {stats['biomass']:.1f} Tonnes
+        - CO2 Injection (Atmosphere): {stats['co2']:.1f} Tonnes
+        - PM2.5 Aerosol Load (Toxic Smog): {stats['pm25']:.1f} kg
+        
+        TASK: Write a "Monthly Strategic Ecological Impact Report" (Markdown).
+        
+        SECTIONS REQUIRED:
+        1. **Executive Summary**: High-level overview of the fire season severity based on the data.
+        2. **Atmospheric Toxicity & Public Health**: 
+           - Analyze the PM2.5 load ({stats['pm25']:.1f} kg). 
+           - Explain the health risks (respiratory/cardiovascular) to the local population.
+           - Mention "Aerosol Optical Depth (AOD)" implications.
+        3. **Ecological Damage Assessment**: 
+           - Discuss the carbon footprint ({stats['co2']:.1f} Tonnes CO2).
+           - Mention soil degradation (loss of Nitrogen/Phosphorus) due to stubble burning.
+        4. **Strategic Intervention**: 
+           - Suggest 2 science-backed solutions (e.g., Happy Seeder technology, Bio-decomposers) to reduce next month's numbers.
+        
+        TONE: Scientific, Urgent, Data-Driven. Use bullet points.
+        """
+        
+        # SWITCHING TO LLAMA 3.3
+        completion = client.chat.completions.create(
+            model="meta-llama/llama-3.3-70b-instruct:free",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        print(f"AI Error: {e}")
+        return "AI Analysis Unavailable due to API limits."
+
+def send_email(report_path, map_path, csv_path):
+    if not SENDER_EMAIL: return
+    
     msg = MIMEMultipart()
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECIPIENT_EMAIL
-    msg['Subject'] = f"🚨 SATARK DEEP INTEL: {datetime.now().strftime('%B %Y')}"
-    msg.attach(MIMEText("Attached: Multi-Dimensional Strategic Audit.", 'plain'))
-
-    for path in [report_path, map_path]:
-        if os.path.exists(path):
-            with open(path, "rb") as f:
+    msg['Subject'] = f"🚨 SATARK ECOLOGICAL AUDIT: {datetime.now().strftime('%B %Y')}"
+    msg.attach(MIMEText("Attached: Monthly Ecological Damage Report & Raw Thesis Data.", 'plain'))
+    
+    # Attach Map, Report, and CSV
+    for fpath in [report_path, map_path, csv_path]:
+        if os.path.exists(fpath):
+            with open(fpath, "rb") as f:
                 part = MIMEBase("application", "octet-stream")
                 part.set_payload(f.read())
                 encoders.encode_base64(part)
-                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(path)}")
+                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(fpath)}")
                 msg.attach(part)
-
+    
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.starttls()
-            server.login(SENDER_EMAIL, GMAIL_PASSWORD)
-            server.send_message(msg)
-        print("✅ Email Sent.")
+        with smtplib.SMTP("smtp.gmail.com", 587) as s:
+            s.starttls()
+            s.login(SENDER_EMAIL, GMAIL_PASSWORD)
+            s.send_message(msg)
+        print("✅ Audit Email Sent.")
     except Exception as e:
-        print(f"❌ Email Failed: {e}")
+        print(f"❌ Email Error: {e}")
 
-def get_ai_analysis(prompt):
-    """
-    Tries Llama 3.3 first. If it fails, falls back to Phi-3.
-    """
-    models = [
-        "meta-llama/llama-3.3-70b-instruct:free",  # Primary: The Beast
-        "microsoft/phi-3-medium-128k-instruct:free", # Backup: The Reliable
-        "mistralai/mistral-7b-instruct:free"       # Last Resort
-    ]
+def run_audit():
+    print(f"🚀 SATARK MONTHLY AUDIT (LLAMA EDITION) | {datetime.now().strftime('%Y-%m')}")
     
-    for model in models:
-        print(f"🤖 Attempting analysis with {model}...")
-        try:
-            completion = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return completion.choices[0].message.content
-        except Exception as e:
-            print(f"⚠️ {model} failed: {e}. Switching to backup...")
-            time.sleep(2) # Breath before retry
-            
-    return "ANALYSIS FAILED: All AI models are currently overloaded."
-
-def run_monthly_audit():
-    print("🚀 SATARK V10.0 (Resilient Edition): STARTING...")
-    
-    # 2. DATA AGGREGATION
-    files = glob.glob("weekly_reports/*.csv")
-    if not files:
-        print("⚠️ No data found.")
+    # 1. FETCH & CALCULATE
+    df = fetch_monthly_data()
+    if df.empty:
+        print("⚠️ No data found for this month.")
         return
 
-    master_df = pd.concat([pd.read_csv(f) for f in files]).drop_duplicates(subset=['id'])
+    df = apply_thesis_physics(df)
     
-    # 3. CALCULATIONS
-    master_df['ha'] = master_df['est_area_m2'] / 10000
-    master_df['loss_inr'] = master_df.apply(lambda x: x['ha']*370000 if x['research_zone']=="ZONE_A_NORTH" else x['ha']*58000, axis=1)
-    master_df['co2_tonnes'] = master_df['ha'] * 20 
-    
-    # 4. MAP GENERATION
+    # 2. GENERATE MAP (Heat Intensity)
     plt.figure(figsize=(10, 8), facecolor='#121212')
     ax = plt.axes(); ax.set_facecolor("#121212")
-    colors = master_df['research_zone'].map({'ZONE_A_NORTH':'#FF3131','ZONE_D_CENTRAL':'#FFBD03','ZONE_B_EAST':'#00E5FF','ZONE_C_SOUTH':'#70FF00'}).fillna('#FFFFFF')
-    plt.scatter(master_df['lon'], master_df['lat'], s=master_df['ha']*5, c=colors, alpha=0.7)
-    plt.title(f"SATARK THREAT MAP | {datetime.now().strftime('%B %Y')}", color='white')
-    os.makedirs('monthly_audits', exist_ok=True)
-    map_filename = f"monthly_audits/MAP_{datetime.now().strftime('%Y-%m')}.png"
-    plt.savefig(map_filename, dpi=300, bbox_inches='tight'); plt.close()
-
-    # 5. DEEP ANALYSIS
-    total_loss_cr = master_df['loss_inr'].sum() / 10000000
-    total_co2 = master_df['co2_tonnes'].sum()
-    zone_breakdown = master_df.groupby('research_zone').size().to_dict()
-
-    prompt = f"""
-    ACT AS: Chief Strategy Officer for Climate Defense.
-    INPUT DATA:
-    - Month: {datetime.now().strftime('%B %Y')}
-    - Total Fires: {len(master_df)}
-    - Economic Loss: ₹{total_loss_cr:.2f} Crores
-    - Ecological Load: {total_co2:.1f} Tonnes of CO2
-    - Zone Breakdown: {zone_breakdown}
-
-    TASK: Write a Strategic Report.
-    1. FINANCIAL IMPACT: Is the ₹{total_loss_cr:.2f} Cr loss sustainable? 
-    2. PUBLIC HEALTH: Impact of {total_co2:.1f} Tonnes of CO2.
-    3. INTERVENTION: Recommend 2 high-tech solutions.
-
-    OUTPUT FORMAT: Markdown.
-    """
-
-    report_text = get_ai_analysis(prompt)
-
-    # 6. ARCHIVE & SEND
-    report_filename = f"monthly_audits/REPORT_{datetime.now().strftime('%Y-%m')}.md"
-    with open(report_filename, "w") as f:
-        f.write(f"# SATARK DEEP INTEL // {datetime.now().strftime('%B %Y')}\n\n![Map]({os.path.basename(map_filename)})\n\n{report_text}")
     
-    master_df.to_csv(f"monthly_audits/DATA_{datetime.now().strftime('%Y-%m')}.csv", index=False)
-    send_intel_email(report_filename, map_filename)
+    # Plot: X=Lon, Y=Lat, Color=Watts
+    sc = plt.scatter(df['lon'], df['lat'], c=df['frp_mw'], cmap='inferno', s=60, alpha=0.8)
+    plt.colorbar(sc, label='Fire Radiative Power (MW)')
+    plt.title(f"THERMAL INTENSITY MAP | {datetime.now().strftime('%B %Y')}", color='white')
+    
+    os.makedirs('audit_out', exist_ok=True)
+    map_file = "audit_out/intensity_map.png"
+    plt.savefig(map_file, dpi=150, bbox_inches='tight')
+    plt.close()
+
+    # 3. GENERATE REPORT
+    stats = {
+        'count': len(df),
+        'max_mw': df['frp_mw'].max(),
+        'biomass': df['biomass_tonnes'].sum(),
+        'co2': df['co2_tonnes'].sum(),
+        'pm25': df['pm25_kg'].sum()
+    }
+    print("🤖 Consulting Llama 3.3 for Ecological Analysis...")
+    ai_text = get_ai_report(stats)
+    
+    report_file = "audit_out/report.md"
+    with open(report_file, "w") as f:
+        f.write(f"# SATARK ECOLOGICAL DAMAGE ASSESSMENT\n\n{ai_text}")
+
+    # 4. EXPORT DATA (For your Thesis backup)
+    csv_file = f"audit_out/data_{datetime.now().strftime('%Y-%m')}.csv"
+    df.to_csv(csv_file, index=False)
+
+    # 5. DISPATCH
+    send_email(report_file, map_file, csv_file)
     print("✅ Audit Complete.")
 
 if __name__ == "__main__":
-    run_monthly_audit()
+    run_audit()
