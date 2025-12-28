@@ -1,51 +1,104 @@
 import requests
 import pandas as pd
-import numpy as np  
-import google.generativeai as genai
-import time
-import rasterio
 import os
 import json
+import time
 from datetime import datetime
+from openai import OpenAI 
 
 # ==========================================
 # 🔐 CONFIGURATION
 # ==========================================
 try:
+    # API KEYS
     NASA_KEY = os.environ.get("NASA_KEY")
-    GEMINI_KEY = os.environ.get("GEMINI_KEY")
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
     SUPABASE_URL = os.environ.get("SUPABASE_URL")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+    OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY") 
     
-    if not all([NASA_KEY, GEMINI_KEY, TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY]):
-        # Fallback for local testing (Remove in production)
-        pass 
+    if not all([NASA_KEY, TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, OPENROUTER_API_KEY]):
+        print("⚠️ CRITICAL: Missing Environment Variables.")
+        # We continue only for testing. In Prod, this might fail.
 except Exception as e:
-    exit(1)
+    print(f"Config Error: {e}")
 
-LAND_MAP_PATH = "land_map.tif"
+# AI CLIENT (OpenRouter)
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
 
-# 🌍 GEO-FENCE: WEST BENGAL (Optimized for NASA Request)
-# Format: min_lon, min_lat, max_lon, max_lat
-WB_EXTENT = "85.8,21.5,89.9,27.3" 
-LAT_MIN, LAT_MAX = 21.5, 27.3
-LON_MIN, LON_MAX = 85.8, 89.9
+# 🌍 GEO-FILTER: WEST BENGAL
+# We fetch India, but we only act on WB to save DB space and Alerts.
+WB_LAT_MIN, WB_LAT_MAX = 21.5, 27.3
+WB_LON_MIN, WB_LON_MAX = 85.8, 89.9
+
+# ==========================================
+# 🕵️‍♂️ TRUTH LAYER: OPENSTREETMAP (OSM)
+# ==========================================
+def verify_land_use(lat, lon):
+    """
+    Queries OpenStreetMap (Overpass API) to see what is ACTUALLY at this location.
+    Returns: 'FARM', 'FOREST', 'INDUSTRY', 'URBAN', or 'UNKNOWN'
+    """
+    overpass_url = "http://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json];
+    (
+      way(around:500, {lat}, {lon})["landuse"];
+      way(around:500, {lat}, {lon})["industrial"];
+      way(around:500, {lat}, {lon})["leisure"];
+      node(around:500, {lat}, {lon})["place"];
+    );
+    out tags;
+    """
+    try:
+        # Rate limit protection
+        time.sleep(1) 
+        response = requests.get(overpass_url, params={'data': query}, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            tags_found = []
+            
+            for element in data['elements']:
+                if 'tags' in element:
+                    tags = element['tags']
+                    # Check Landuse
+                    if 'landuse' in tags: tags_found.append(tags['landuse'])
+                    if 'industrial' in tags: return "INDUSTRY" # Instant Block
+            
+            # DECISION LOGIC
+            # Block List
+            if any(t in ['industrial', 'residential', 'commercial', 'retail', 'quarry', 'mine', 'railway'] for t in tags_found):
+                return "INDUSTRY"
+            
+            # Allow List
+            if any(t in ['farmland', 'farm', 'orchard', 'meadow', 'grass', 'vineyard'] for t in tags_found):
+                return "FARM"
+            if any(t in ['forest', 'wood', 'scrub', 'nature_reserve'] for t in tags_found):
+                return "FOREST"
+                
+            return "UNKNOWN" # Likely deep rural area with no map data (Assume Farm)
+            
+    except:
+        return "UNKNOWN" # Fail-open (Assume valid if OSM is down)
+    
+    return "UNKNOWN"
 
 # ==========================================
 # 🧠 SMART DATABASE LAYER (RPC)
 # ==========================================
-def save_fire_event(lat, lon, source, cluster_size, region="ZONE_UNKNOWN"):
+def save_fire_event(lat, lon, source, cluster_size, region, total_frp):
     """
-    Calls the SQL function 'upsert_fire_cluster' to handle de-duplication logic.
+    Sends FRP (Watts) to Supabase. Thesis Grade Data.
     """
-    # 1. Estimate Area
-    base_pixel = 1000000 if "MODIS" in source else 375000 # VIIRS is finer
-    if "HIMAWARI" in source: base_pixel = 4000000
+    # Legacy Area Est (Visual only)
+    base_pixel = 1000000 if "MODIS" in source else 375000 
     est_area = (base_pixel * cluster_size) * 0.15 
 
-    # 2. Call Supabase RPC (Remote Procedure Call)
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -57,19 +110,20 @@ def save_fire_event(lat, lon, source, cluster_size, region="ZONE_UNKNOWN"):
         "lon_in": lon,
         "source_in": source,
         "area_in": est_area,
-        "region_in": region
+        "region_in": region,
+        "frp_in": float(total_frp) # <--- SENDING WATTS
     }
 
     try:
-        # We call the SQL function we just created
         rpc_url = f"{SUPABASE_URL}/rest/v1/rpc/upsert_fire_cluster"
         response = requests.post(rpc_url, headers=headers, json=payload)
         
         if response.status_code == 200:
             result = response.json()
-            # Returns: {'status': 'new'/'merged', 'id': '...'}
-            is_new = (result.get('status') == 'new')
-            return is_new, est_area
+            # Handle list vs dict response
+            if isinstance(result, list) and len(result) > 0:
+                return (result[0].get('status') == 'new'), est_area
+            return False, est_area
         else:
             print(f"⚠️ DB Error: {response.text}")
             return False, est_area
@@ -79,35 +133,34 @@ def save_fire_event(lat, lon, source, cluster_size, region="ZONE_UNKNOWN"):
         return False, est_area
 
 # ==========================================
-# 🌍 TRUTH LAYER & AI (Kept Same)
+# 🤖 AI ANALYSIS (OpenRouter)
 # ==========================================
-def check_land_type(lat, lon):
-    if not os.path.exists(LAND_MAP_PATH): return "UNKNOWN"
+def analyze_with_ai(lat, lon, land_type, frp):
     try:
-        with rasterio.open(LAND_MAP_PATH) as src:
-            if not (src.bounds.left < lon < src.bounds.right and src.bounds.bottom < lat < src.bounds.top):
-                return "OUT_OF_BOUNDS"
-            row, col = src.index(lon, lat)
-            val = src.read(1, window=rasterio.windows.Window(col, row, 1, 1))[0][0]
-            mapping = {40: "FARM", 50: "URBAN", 10: "FOREST"}
-            return mapping.get(val, "OTHER")
-    except: return "UNKNOWN"
+        intensity = "Low"
+        if frp > 10: intensity = "Moderate"
+        if frp > 50: intensity = "High"
 
-def analyze_fire_event(lat, lon, land_type, area):
-    try:
-        genai.configure(api_key=GEMINI_KEY)
-        model = genai.GenerativeModel('gemini-2.0-flash') 
-        # Optimized Prompt: Minimal tokens, strict output
         prompt = f"""
-        Role: Fire Marshal.
-        Input: {lat},{lon} | {land_type} | {area}m².
-        Rule: If URBAN or <500m², IGNORE. Else ALERT.
-        Output: DECISION: [YES/NO] | MSG: [10-word summary]
+        ACT AS: Satellite Fire Analyst.
+        DATA: {lat},{lon} | Type: {land_type} | Energy: {frp:.1f} MW ({intensity}).
+        CONTEXT: West Bengal, India.
+        
+        TASK:
+        1. If Type is INDUSTRY/URBAN -> DECISION: NO.
+        2. If Type is FARM/FOREST -> DECISION: YES.
+        3. If UNKNOWN and Energy > 2 MW -> DECISION: YES.
+        
+        OUTPUT: DECISION: [YES/NO] | MSG: [Urgent 10-word alert]
         """
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        
+        completion = client.chat.completions.create(
+            model="google/gemini-2.0-flash-exp:free", # Using Free Gemini via OpenRouter
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return completion.choices[0].message.content.strip()
     except:
-        return "DECISION: YES | MSG: Manual Verification Required."
+        return "DECISION: YES | MSG: Manual Check Required."
 
 def send_telegram(message):
     try:
@@ -116,112 +169,116 @@ def send_telegram(message):
     except: pass
 
 # ==========================================
-# 🛰️ MAIN ENGINE (OPTIMIZED)
+# 🛰️ MAIN ENGINE (ALL INDIA FETCH -> WB ALERT)
 # ==========================================
 def scan_sector():
-    print(f"\n🚀 SATARK V6.0 (OPTIMIZED) | {datetime.now().strftime('%H:%M:%S')}")
+    print(f"\n🚀 SATARK V8.0 (IND SCAN) | {datetime.now().strftime('%H:%M:%S')}")
     
-    # 1. DYNAMIC URLS (Bounding Box for Efficiency)
-    # Using 'area/csv' instead of 'world' saves 99% bandwidth
-    base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
+    # 1. FETCH ALL INDIA DATA (Country API)
+    # This ensures we don't miss border fires.
+    base_url = "https://firms.modaps.eosdis.nasa.gov/api/country/csv"
     
     satellites = {
-        "MODIS": f"{base_url}/{NASA_KEY}/MODIS_NRT/{WB_EXTENT}/1",
-        "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{WB_EXTENT}/1",
-        "VIIRS_NOAA": f"{base_url}/{NASA_KEY}/VIIRS_NOAA20_NRT/{WB_EXTENT}/1",
-        # Himawari doesn't support bbox easily, stick to country
-        "HIMAWARI": f"https://firms.modaps.eosdis.nasa.gov/api/country/csv/{NASA_KEY}/HIMAWARI/IND/1"
+        "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/IND/1",
+        "VIIRS_NOAA": f"{base_url}/{NASA_KEY}/VIIRS_NOAA20_NRT/IND/1",
+        "MODIS": f"{base_url}/{NASA_KEY}/MODIS_NRT/IND/1"
     }
     
-    found_fires = []
+    wb_fires = []
 
     for sat_name, url in satellites.items():
         try:
-            print(f"📡 Pinging {sat_name}...", end=" ")
+            print(f"📡 Downloading {sat_name} (All India)...", end=" ")
             try: 
                 df = pd.read_csv(url)
-                print("✅")
+                print(f"✅ {len(df)} Points")
             except: 
-                print("❌")
+                print("❌ Failed")
                 continue
 
             df.columns = [c.lower() for c in df.columns]
-            # Standardize Columns
-            if 'latitude' not in df.columns and 'lat' in df.columns:
-                df.rename(columns={'lat': 'latitude', 'lon': 'longitude'}, inplace=True)
-
             if df.empty or 'latitude' not in df.columns: continue
-
-            # Double Check Filter (API isn't always perfect)
-            local_fires = df[
-                (df['latitude'] >= LAT_MIN) & (df['latitude'] <= LAT_MAX) &
-                (df['longitude'] >= LON_MIN) & (df['longitude'] <= LON_MAX)
-            ]
             
-            if not local_fires.empty:
-                # Filter low confidence
-                if 'confidence' in local_fires.columns:
-                    # Filter out 'low' confidence or < 50%
-                    local_fires = local_fires[local_fires['confidence'].astype(str) != 'l']
-                
-                local_fires['source'] = sat_name
-                found_fires.append(local_fires)
-                print(f"   ⚠️ Detected {len(local_fires)} heat signatures.")
+            # EXTRACT FRP
+            if 'frp' not in df.columns: df['frp'] = 0.0
+
+            # 2. FILTER FOR WEST BENGAL (Local Filter)
+            # We downloaded India, now we slice out Bengal.
+            local_df = df[
+                (df['latitude'] >= WB_LAT_MIN) & (df['latitude'] <= WB_LAT_MAX) &
+                (df['longitude'] >= WB_LON_MIN) & (df['longitude'] <= WB_LON_MAX)
+            ].copy()
+            
+            # Confidence Filter (Reject Low)
+            if 'confidence' in local_df.columns:
+                local_df = local_df[local_df['confidence'].astype(str) != 'l']
+            
+            if not local_df.empty:
+                local_df['source'] = sat_name
+                wb_fires.append(local_df)
+                print(f"   ⚠️ {len(local_df)} fires inside West Bengal.")
 
         except Exception as e: print(f"Error: {e}")
 
-    if not found_fires:
-        print("✅ Sector Clear.")
+    if not wb_fires:
+        print("✅ West Bengal Sector Clear.")
         return
 
-    # FUSION
-    merged = pd.concat(found_fires)
-    # Grouping by 2 decimals (~1km) for initial python-side clustering
+    # 3. CLUSTERING (Combine nearby pixels)
+    merged = pd.concat(wb_fires)
     merged['lat_r'] = merged['latitude'].round(2) 
     merged['lon_r'] = merged['longitude'].round(2)
     
     unique_clusters = merged.groupby(['lat_r', 'lon_r']).agg({
-        'latitude': 'mean', 'longitude': 'mean', 'source': 'first', 'latitude': 'count'
+        'latitude': 'mean', 
+        'longitude': 'mean', 
+        'source': 'first', 
+        'frp': 'sum',      # Thesis Math: Sum MW
+        'latitude': 'count'
     }).rename(columns={'latitude': 'cluster_size'}).reset_index()
 
-    for _, fire in unique_clusters.iterrows():
-        lat, lon = fire['lat_r'], fire['lon_r'] # Use rounded for cleaner logs, real for DB
-        # Use the MEAN lat/lon from the cluster
-        real_lat, real_lon = fire[2], fire[3] # Indexing might vary, careful.
-        # Better:
-        real_lat = fire['latitude'] if 'latitude' in fire else lat
-        real_lon = fire['longitude'] if 'longitude' in fire else lon
-        
-        size = fire['cluster_size']
-        source = fire['source']
+    print(f"📊 Processing {len(unique_clusters)} distinct events...")
 
-        # Determine Region (Simple Logic)
+    for _, fire in unique_clusters.iterrows():
+        lat = fire['latitude']
+        lon = fire['longitude']
+        source = fire['source']
+        size = fire['cluster_size']
+        total_frp = fire['frp'] # Total Energy
+
+        # 4. TRUTH CHECK (OSM)
+        # We verify ONLY the clusters inside WB.
+        land_type = verify_land_use(lat, lon)
+        
+        # STRICT FILTER:
+        if land_type == "INDUSTRY":
+            print(f"   🛑 Blocked: Industrial Heat at {lat}, {lon}")
+            continue
+            
+        # Determine Region
         region = "ZONE_UNKNOWN"
         if 21.5 <= lat <= 23.0: region = "ZONE_C_SOUTH"
         elif 23.0 < lat <= 25.0: region = "ZONE_D_CENTRAL"
         elif lat > 26.0: region = "ZONE_A_NORTH"
 
-        # 🧠 SMART SAVE
-        is_new_fire, area_m2 = save_fire_event(real_lat, real_lon, source, size, region)
+        # 5. SAVE TO DB (FRP Included)
+        is_new, area_est = save_fire_event(lat, lon, source, size, region, total_frp)
 
-        if not is_new_fire:
-            print(f"   🔄 Merged with existing fire at {lat}, {lon}")
-            continue # Skip alerting for existing fires
+        if not is_new: continue 
 
-        # IT IS NEW - ANALYZE
-        land_type = check_land_type(lat, lon)
-        print(f"   🔥 NEW THREAT: {lat}, {lon} | {land_type}")
+        # 6. AI & ALERT
+        print(f"   🔥 ALERTING: {total_frp:.1f} MW | {land_type}")
         
-        if land_type == "URBAN": continue
+        ai_res = analyze_with_ai(lat, lon, land_type, total_frp)
         
-        ai_res = analyze_fire_event(lat, lon, land_type, int(area_m2))
-        
-        if "DECISION: YES" in ai_res or "YES" in ai_res:
+        if "DECISION: YES" in ai_res:
              msg_body = ai_res.split("MSG:")[1].strip() if "MSG:" in ai_res else "Fire Detected"
+             
              telegram_msg = (
                  f"🔥 SATARK ALERT (WB)\n"
                  f"📍 {lat:.4f}, {lon:.4f} ({region})\n"
-                 f"🌍 {land_type} | 📏 {area_m2:.0f}m²\n"
+                 f"⚡ ENERGY: {total_frp:.1f} MW\n"
+                 f"🌍 TYPE: {land_type}\n"
                  f"🤖 AI: {msg_body}\n"
                  f"🔗 https://maps.google.com/?q={lat},{lon}"
              )
