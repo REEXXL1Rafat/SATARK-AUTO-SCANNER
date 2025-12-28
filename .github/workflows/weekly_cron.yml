@@ -8,9 +8,7 @@ on:
 jobs:
   report_generation:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # Essential for the bot to push the CSV back to the repo
-
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -25,23 +23,10 @@ jobs:
 
       - name: Run The Historian
         env:
+          # DB Keys (To Fetch Data)
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # Email Keys (To Send Alert)
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python weekly_intel.py
-
-      - name: Save Report to Repo
-        run: |
-          # 1. Setup Identity
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          
-          # 2. Check for the specific directory and CSV files
-          if [ -d "weekly_reports" ] && [ "$(ls -A weekly_reports/*.csv 2>/dev/null)" ]; then
-            echo "✅ New report detected. Committing to repository..."
-            git add weekly_reports/*.csv
-            git commit -m "📊 Weekly Intel Report: $(date +'%Y-%m-%d')"
-            git push
-          else
-            echo "⚠️ No new report generated (likely due to zero fire detections). Staying Green."
-            exit 0
-          fi
