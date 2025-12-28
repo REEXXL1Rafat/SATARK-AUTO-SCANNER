@@ -22,14 +22,17 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          # We use 'openai' to talk to the OpenRouter Free API
+          # 'openai' is needed for Llama 3.3 via OpenRouter
           pip install pandas matplotlib requests openai
 
       - name: Run Deep Audit
         env:
-          # The Key to the "Free" AI Model
+          # DB Keys (CRITICAL ADDITION)
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # AI Key
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          # Email Credentials for the PDF Dispatch
+          # Email Credentials
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
         run: python monthly_audit.py
@@ -39,16 +42,14 @@ jobs:
           git config --global user.name 'SATARK Bot'
           git config --global user.email 'bot@satark.ai'
           
-          # 1. Check if the output folder exists
-          if [ -d "monthly_audits" ]; then
-            git add monthly_audits/*
+          # The new script saves to 'audit_out'
+          if [ -d "audit_out" ]; then
+            git add audit_out/*
             
-            # 2. THE FIX: If 'git commit' fails (because files are identical), 
-            # we catch it with '|| echo' so the workflow stays GREEN.
-            git commit -m "📈 Monthly Deep Audit" || echo "⚠️ Data unchanged since last run. Skipping commit."
+            # Commit if there are changes, ignore if empty
+            git commit -m "📈 Monthly Thesis Data: $(date +'%Y-%m')" || echo "⚠️ Data unchanged. Skipping commit."
             
-            # 3. Push changes (if any)
             git push || echo "⚠️ Nothing new to push."
           else
-            echo "⚠️ No monthly_audits folder found. (Check Python script logs)"
+            echo "⚠️ No 'audit_out' folder found. Check script output for errors."
           fi
