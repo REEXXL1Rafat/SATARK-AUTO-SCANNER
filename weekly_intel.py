@@ -1,71 +1,104 @@
 import os
 import pandas as pd
 import requests
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 
-# 1. SETUP CREDENTIALS
+# ==========================================
+# 🔐 CONFIGURATION
+# ==========================================
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-TABLE_NAME = "fires" 
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
+GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+RECIPIENT_EMAIL = "reezaalarafat@gmail.com"
 
-def fetch_and_clean():
-    print(f"🕵️ WEEKLY INTEL BOT | {datetime.now()}")
-    
-    # 2. CALCULATE DATE RANGE (Last 7 Days)
-    today = datetime.now()
-    last_week = today - timedelta(days=7)
-    
-    # 3. FETCH DATA FROM SUPABASE
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}"
-    }
-
-    # --- CRITICAL FIX: Pointing to 'first_seen' instead of 'created_at' ---
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}?select=*&first_seen=gte.{last_week.isoformat()}"
+def send_email(subject, body):
+    if not SENDER_EMAIL or not GMAIL_PASSWORD: 
+        print("❌ Email Config Missing")
+        return
+        
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = RECIPIENT_EMAIL
     
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(SENDER_EMAIL, GMAIL_PASSWORD)
+            server.send_message(msg)
+        print("✅ Weekly Dispatch Sent.")
     except Exception as e:
-        print(f"❌ Connection Failed: {e}")
+        print(f"❌ Email Failed: {e}")
+
+def run_weekly_check():
+    print(f"🕵️ WEEKLY INTEL | {datetime.now().strftime('%Y-%m-%d')}")
+    
+    # 1. FETCH LAST 7 DAYS FROM DB
+    # We filter by 'last_seen' to get active fires from this week
+    last_week = (datetime.now() - timedelta(days=7)).isoformat()
+    
+    headers = {
+        "apikey": SUPABASE_KEY, 
+        "Authorization": f"Bearer {SUPABASE_KEY}"
+    }
+    
+    # We select 'frp_mw' to report Intensity
+    url = f"{SUPABASE_URL}/rest/v1/fires?select=*&last_seen=gte.{last_week}"
+    
+    try:
+        r = requests.get(url, headers=headers)
+        data = r.json()
+    except Exception as e:
+        print(f"❌ DB Connection Failed: {e}")
         return
 
     if not data:
-        print("✅ No fires detected in the last 7 days. Skipping report.")
+        print("✅ No fires detected this week. System Clean.")
         return
 
-    # 4. CREATE DATAFRAME
     df = pd.DataFrame(data)
-    print(f"📥 Downloaded {len(df)} raw logs from Supabase.")
-
-    # 5. APPLY "IRON DOME" CLEANING (Using your 'lon' column)
-    if 'lon' in df.columns:
-        clean_df = df[df['lon'] < 92.5].copy()
-    else:
-        print("⚠️ 'lon' column not found, skipping geo-filter.")
-        clean_df = df.copy()
-
-    # 6. APPLY ZONING (Your logic)
-    def assign_zone(row):
-        lat, lon = row.get('lat', 0), row.get('lon', 0)
-        if 28.0 <= lat <= 32.5 and 73.0 <= lon <= 77.5: return "ZONE_A_NORTH"
-        if 21.5 <= lat <= 27.0 and 85.5 <= lon <= 89.9: return "ZONE_B_EAST"
-        if 18.0 <= lat <= 24.0 and 80.0 <= lon <= 85.0: return "ZONE_D_CENTRAL"
-        if 10.0 <= lat <= 20.0 and 73.0 <= lon <= 80.0: return "ZONE_C_SOUTH"
-        return "ZONE_OTHER"
-
-    clean_df['research_zone'] = clean_df.apply(assign_zone, axis=1)
-
-    # 7. SAVE REPORT
-    if not os.path.exists('weekly_reports'):
-        os.makedirs('weekly_reports')
-        
-    filename = f"weekly_reports/intel_{today.strftime('%Y-%m-%d')}.csv"
-    clean_df.to_csv(filename, index=False)
     
-    print(f"💎 SUCCESS: Report Generated: {filename} | Rows: {len(clean_df)}")
+    # 2. CALCULATE METRICS
+    # Handle cases where column might be missing (rare but safe)
+    if 'frp_mw' not in df.columns: df['frp_mw'] = 0.0
+    
+    total_fires = len(df)
+    max_intensity = df['frp_mw'].max()
+    avg_intensity = df['frp_mw'].mean()
+    total_energy = df['frp_mw'].sum()
+    
+    # breakdown by Zone
+    if 'location' in df.columns:
+        zone_counts = df['location'].value_counts().to_string()
+    else:
+        zone_counts = "No Zone Data"
+    
+    # 3. GENERATE STATUS REPORT
+    body = f"""
+    SATARK WEEKLY SITREP
+    --------------------
+    📅 Period: Last 7 Days
+    🔥 Total Incidents: {total_fires}
+    
+    ⚡ INTENSITY METRICS:
+    - Max Peak: {max_intensity:.2f} MW
+    - Average: {avg_intensity:.2f} MW
+    - Total Energy: {total_energy:.2f} MW
+    
+    📍 ACTIVITY ZONES:
+    {zone_counts}
+    
+    --------------------
+    SYSTEM STATUS:
+    - Database: Connected (Supabase)
+    - Scanner: Active
+    - Next Audit: 1st of Next Month
+    """
+    
+    send_email(f"SATARK Weekly: {total_fires} Fires Detected", body)
 
 if __name__ == "__main__":
-    fetch_and_clean()
+    run_weekly_check()
