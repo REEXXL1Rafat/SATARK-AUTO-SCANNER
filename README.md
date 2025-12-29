@@ -1,83 +1,85 @@
+
 # SATARK: Autonomous Hyper-Local Climate Intelligence Network
 
-[![Status](https://img.shields.io/badge/Status-Field%20Trials%20(West%20Bengal)-success)]()
-[![Engine](https://img.shields.io/badge/Core-SATARK%20v2.0-blue)]()
-[![Research](https://img.shields.io/badge/Method-Mixed%20Methods-orange)]()
-[![License](https://img.shields.io/badge/License-MIT-green)]()
+<div align="center">
 
-> **"You cannot arrest a million farmers for doing the math of survival. A ban is just a piece of paper against a wall of fire. If the economics force them to burn, we don't need police—we need a better equation."**
+[![Status](https://img.shields.io/badge/Status-Field%20Trials-green?style=for-the-badge)]()
+[![Engine](https://img.shields.io/badge/Core-SATARK%20v2.0-blue?style=for-the-badge)]()
+[![Inference](https://img.shields.io/badge/LLM-Llama%203.3%20Guard-violet?style=for-the-badge)]()
+[![License](https://img.shields.io/badge/License-MIT-gold?style=for-the-badge)]()
 
-## 📖 The Research Thesis
-This repository houses the computational engine for a multidimensional socio-economic study on the **Stubble Burning Crisis** in  India. 
+> **"A ban is just a piece of paper against a wall of fire. If the economics force a farmer to burn, we don't need more police—we need a better equation. SATARK is that equation."**
 
-Current policy treats agricultural fire as a criminal act. My research argues it is an **economic inevitability**. By combining high-frequency satellite telemetry with ground-level anthropological interviews, this project aims to quantify the "Time-Cost Squeeze" that forces farmers to burn, while measuring the exact ecological debt incurred per acre.
-
-**The Dimensions:**
-1.  **The Eye (Quantitative):** Real-time detection of "micro-fires" often missed by global datasets.
-2.  **The Voice (Qualitative):** Interviews with small-plot farmers to map the psychology of "The Burn."
-3.  **The Cost (Ecological):** Algorithmic conversion of thermal intensity (MW) into PM2.5 and CO2 output.
+</div>
 
 ---
 
-## 🚀 The SATARK Engine
+## 🚀 The Engine
+**SATARK** (Sanskrit for *Alert*) is an autonomous "Hybrid Intelligence" network designed to provide high-frequency, verifiable climate data where state systems remain "legally blind". While national sensors suffer from 4-6 hour communication lags, SATARK utilizes a real-time **Detect-Verify-Quantify** loop to identify decentralized "micro-fires" (<50MW) often omitted from global datasets.
 
-SATARK (Sanskrit for *Alert*) is the technical backbone of this research. It is an autonomous "Hybrid Intelligence" network designed to validate satellite anomalies with semantic ground truth.
+It is the technical answer to the **"Latency vs. Resolution Trap,"** fusing multi-constellation satellite telemetry with semantic ground truth to operationalize "Smart Burning" protocols.
+
+### **System Architecture**
+The engine bypasses bureaucratic latency by employing an autonomous cron-based inference loop.
 
 ```mermaid
 graph TD
-    A[NASA VIIRS/MODIS] -->|Raw Thermal Data| B(SATARK Engine)
+    A[NASA VIIRS/MODIS] -->|Raw Telemetry Stream| B(SATARK Engine)
     B -->|Filter Glint/Industrial| C{Llama 3.3 Guard}
-    C -->|Check Borders/Context| D[Semantic Verification]
+    C -->|Context: Mines vs Farms| D[Semantic Verification]
     D -->|Valid Fire| E[Physics Kernel]
-    E -->|Calculate PM2.5/CO2| F[Supabase DB]
-    F -->|Real-time Alert| G[Telegram/Admin]
-    F -->|Monthly Audit| H[Ecological Report]
+    E -->|Calc: Biomass & Toxicity| F[Supabase Cloud]
+    F -->|Real-Time Alert| G[Telegram Gateway]
+    F -->|Strategic Audit| H[Ecological Damage Report]
+
 ```
-    ```
----
-
-
-🧠 Technical Sophistication
-1. Semantic Validation (Llama 3.3 Border Guard)
-Standard algorithms frequently misidentify industrial heat (mines, steel mills) as biomass combustion.
-
-Contextual Logic: SATARK passes coordinates through meta-llama-3-70b-instruct to analyze proximity to OpenStreetMap (OSM) tags like industrial, quarry, or mineshaft.
-
-Geopolitical Filtering: The engine uses LLM reasoning to distinguish between fires inside India’s borders and those in neighboring territories (Bangladesh/Pakistan), preventing false diplomatic flags.
 
 ---
 
-2. The Physics Kernel (Atmospheric Flux)
-We do not just log coordinates; we quantify the Atmospheric Debt.
+## 🧠 Technical Sophistication
 
-Radiance Conversion: Implements Wooster et al. (2005) coefficients to convert Fire Radiative Power (MW) into total Megajoules of energy.
+### **1. Semantic Validation (The Llama 3.3 Border Guard)**
 
-Toxicity Output: The monthly_audit.py module automatically calculates the precise tonnage of PM2.5 and CO2 injected into the atmosphere, providing a multidimensional ecological audit.
+Standard algorithms frequently misidentify industrial heat (mines, steel mills) as biomass combustion. SATARK solves this with an LLM-based verification layer:
+
+* **Contextual Logic:** Passes coordinates through `meta-llama-3-70b-instruct` to analyze proximity to OpenStreetMap (OSM) tags like `industrial`, `quarry`, or `mineshaft`.
+* **Geopolitical Filtering:** Distinguishes between fires inside India’s borders and those in neighboring territories (Bangladesh/Pakistan), preventing false diplomatic flags.
+
+### **2. The Physics Kernel (Atmospheric Flux)**
+
+We do not just log coordinates; we quantify the **Cumulative Ecological Debt**.
+
+* **Radiance Conversion:** Implements *Wooster et al. (2005)* coefficients to convert Fire Radiative Power (MW) into total Megajoules of energy.
+* **Toxicity Output:** The `monthly_audit.py` module automatically calculates the precise tonnage of **PM2.5 (Aerosol)** and **CO2** injected into the local atmosphere, providing a multidimensional ecological audit.
 
 ---
 
-| File                 | Description                                                                                              |
-| -------------------- | -------------------------------------------------------------------------------------------------------- |
-| `satark_cloud_v5.py` | The Scanner. Fetches NASA telemetry, runs Llama 3 semantic checks, manages Supabase DB, emits alerts.    |
-| `monthly_audit.py`   | The Auditor. Monthly strategic ecological impact reports and carbon footprint accounting.                |
-| `weekly_intel.py`    | The Aggregator. High-level trend analysis, temporal clustering, and sector summaries for administrators. |
-| `requirements.txt`   | Core dependencies (pandas, rasterio, openai, supabase-py, etc.).                                         |
+## 📂 Codebase Manifest & Intelligence Outputs
 
+| System Component | Description |
+| --- | --- |
+| **[`satark_cloud_v5.py`](https://www.google.com/search?q=./satark_cloud_v5.py)** | **The Scanner.** Manages NASA FIRMS ingestion, Llama-based semantic filtering, and Supabase integration. |
+| **[`monthly_audit.py`](https://www.google.com/search?q=./monthly_audit.py)** | **The Auditor.** Physics-driven engine that generates "Strategic Ecological Impact Reports". |
+| **[`weekly_intel.py`](https://www.google.com/search?q=./weekly_intel.py)** | **The Aggregator.** Compiles temporal trends to map the specific "Smart Burning" windows for local administration. |
+| **[`audit_out/`](https://www.google.com/search?q=./audit_out/)** | **The Evidence.** Visual outputs including thermal intensity heatmaps and Markdown reports. |
 
+---
 
+## 📉 Pilot Performance (West Bengal Sector)
 
-📉 Pilot Performance (West Bengal Sector)
-Active field trials have established the following benchmarks:
+Active field trials have established the following benchmarks for the system:
 
-Latency Advantage: Detected verified fires ~4 hours faster than the national forest department communication chain.
+* **⚡ Latency Advantage:** Detected verified fires **~4 hours faster** than the national forest department communication chain.
+* **🔍 Micro-Fire Identification:** Captured events <50MW representing **30%** of total regional aerosol load, previously unmapped by state policy.
+* **📊 Economic Correlation:** Engine data confirms burning is inversely correlated with labor availability, proving the crisis is an economic math problem, not a lack of environmental awareness.
 
-Micro-Fire Identification: Captured events <50MW representing 30% of total regional aerosol load, previously unmapped by state policy.
+---
 
-Economic Correlation: Data proves burning is inversely correlated with labor availability, not a lack of environmental awareness.
+## ⚡ Deployment
 
-⚡ Deployment
+```bash
 # Clone the SATARK Intelligence Engine
-git clone https://github.com/reexxl1rafat/satark-auto-scanner.git
+git clone [https://github.com/reexxl1rafat/satark-auto-scanner.git](https://github.com/reexxl1rafat/satark-auto-scanner.git)
 
 # Set Environment Variables (NASA, Supabase, OpenRouter)
 export NASA_KEY="your_key"
@@ -86,7 +88,20 @@ export OPENROUTER_API_KEY="your_key"
 # Execute a Sector Scan
 python satark_cloud_v5.py
 
+```
+
+## 📜 Research & Citation
+
+The intelligence generated by this tool supports the primary thesis:
+
+> **Sk Reezaal Arafat (2025).** *The Combustion Paradox: Deconstructing the Socio-Economic Drivers and Cumulative Ecological Debt of India’s Stubble Crisis.[Ongoing]*
+
 ---
 
+<div align="center">
+<i>Built with rage and hope in the paddy fields of West Bengal.</i>
+</div>
 
-📜 Academic ResearchThe intelligence generated by this tool supports the primary thesis:Arafat, S. R. (2025). The Combustion Paradox: Deconstructing the Socio-Economic Drivers of India’s Stubble Crisis..
+```
+
+```
