@@ -50,17 +50,24 @@ def get_region_tag(lat, lon):
     return "INDIA_OTHER"
 
 # ==========================================
-# 🕵️‍♂️ OSM VERIFICATION (Bengal Only)
+# 🕵️‍♂️ OSM VERIFICATION (UPDATED V2)
 # ==========================================
-def verify_land_use(lat, lon, region):
-    if region != "WEST_BENGAL": return "UNVERIFIED (Quota Saved)"
+def verify_land_use(lat, lon, region, frp):
+    # LOGIC UPDATE: If fire is HUGE (>50MW), verify it regardless of region.
+    # Otherwise, save quota for Bengal only.
+    if region != "WEST_BENGAL" and frp < 50.0: 
+        return "UNVERIFIED (Quota Saved)"
 
     url = "http://overpass-api.de/api/interpreter"
+    # QUERY UPDATE: Added checks for mines, quarries, and water (glint)
     query = f"""
     [out:json];
     (
       way(around:500, {lat}, {lon})["landuse"];
       way(around:500, {lat}, {lon})["industrial"];
+      way(around:500, {lat}, {lon})["natural"="water"];
+      node(around:500, {lat}, {lon})["man_made"="mineshaft"];
+      way(around:500, {lat}, {lon})["landuse"="quarry"];
     );
     out tags;
     """
@@ -74,11 +81,20 @@ def verify_land_use(lat, lon, region):
         for el in data.get('elements', []):
             if 'tags' in el:
                 tags = el['tags']
+                
+                # Check for Mines/Industry specific tags
                 if 'industrial' in tags: return "INDUSTRY"
+                if tags.get('man_made') == 'mineshaft': return "INDUSTRY" # Catch Mines
+                if tags.get('landuse') == 'quarry': return "INDUSTRY" # Catch Open Cast
+                if tags.get('natural') == 'water': return "WATER" # Catch Glint
+                
                 if 'landuse' in tags: tags_found.append(tags['landuse'])
         
-        if any(t in ['industrial', 'residential', 'railway'] for t in tags_found): return "INDUSTRY"
-        if any(t in ['farmland', 'farm', 'forest', 'orchard'] for t in tags_found): return "FARM"
+        # General Categorization
+        if any(t in ['industrial', 'residential', 'railway', 'brownfield'] for t in tags_found): return "INDUSTRY"
+        if any(t in ['farmland', 'farm', 'forest', 'orchard', 'grass'] for t in tags_found): return "FARM"
+        if any(t in ['reservoir', 'basin'] for t in tags_found): return "WATER"
+        
         return "UNKNOWN"
     except:
         return "UNKNOWN"
@@ -241,8 +257,23 @@ def scan_sector():
         frp = f['frp']
         region = get_region_tag(lat, lon)
         
-        land_type = verify_land_use(lat, lon, region)
-        if land_type == "INDUSTRY": continue
+        # 1. VERIFY LAND USE (Now with FRP check)
+        land_type = verify_land_use(lat, lon, region, frp)
+        
+        # 2. FILTER INDUSTRIAL / WATER
+        if land_type == "INDUSTRY": 
+            print(f"📉 Filtered Industrial Heat at {lat},{lon}")
+            continue
+        if land_type == "WATER":
+            print(f"📉 Filtered Sun Glint at {lat},{lon}")
+            continue
+
+        # 3. GLINT / ANOMALY CHECK (The 300MW Safety Bumper)
+        # If fire is MASSIVE (>300MW) and NOT confirmed Farm/Forest, kill it.
+        # This catches "Ice Reflection" or random anomalies.
+        if frp > 300.0 and land_type not in ["FARM", "FOREST", "UNKNOWN"]:
+             print(f"⚠️ GLINT SUSPECTED: {frp:.1f}MW. Skipping.")
+             continue
 
         # SAVE EVERYTHING
         is_new, area = save_fire_event(lat, lon, f['source'], f['size'], region, frp)
