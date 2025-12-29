@@ -37,43 +37,7 @@ graph TD
     F -->|Monthly Audit| H[Ecological Damage Report]
 
 
-    This is the hardest part. A title defines the lens through which the world sees your work. If "The Indo-Gangetic Trap" felt too narrow, it’s because your work is about human survival vs. system failure, not just geography.Here are 3 distinct directions for the Title. Pick the one that makes your gut say "That's it."Option 1: The "Economic Realist" (Harvard Economics Style)"Rational Pyres: A Mixed-Methods Audit of the Micro-Economic Incentives Behind Stubble Burning"Why it works: It uses the word "Rational." It immediately argues that farmers aren't crazy; they are smart people making a rational financial decision to burn. It frames the fire as a "Pyre" (a funeral fire), suggesting something is dying (the soil/future).Option 2: The "Systemic Failure" (Sociological/Ivy Style)"The Green Revolution’s Exhaust: Quantifying the Dissonance Between Satellite Policy and Agrarian Reality"Why it works: It blames the "Green Revolution." It attacks the "Dissonance" (the gap) between what the satellite sees (Policy) and what the farmer feels (Reality). It sounds incredibly mature.Option 3: The "Raw & Direct" (The Founder Style)"Combustion as Currency: Why the Indian Farmer Pays in Smoke"Why it works: It frames the burning as a form of payment. They are burning because they can't afford not to. It covers the "loss to farmers" and "economical loss" angle perfectly.The Final "World-Class" READMEThis README incorporates your chosen "Manifesto" line, maps directly to your uploaded code (satark_cloud_v5.py, monthly_audit.py), and positions you as a researcher who codes, not just a coder.Copy-Paste this into your README.md file.Markdown# Rational Pyres: The Economics of Smoke
-
-[![Status](https://img.shields.io/badge/Status-Field%20Trials%20(West%20Bengal)-success)]()
-[![Engine](https://img.shields.io/badge/Core-SATARK%20v2.0-blue)]()
-[![Research](https://img.shields.io/badge/Method-Mixed%20Methods-orange)]()
-[![License](https://img.shields.io/badge/License-MIT-green)]()
-
-> **"You cannot arrest a million farmers for doing the math of survival. A ban is just a piece of paper against a wall of fire. If the economics force them to burn, we don't need police—we need a better equation."**
-
-## 📖 The Research Thesis
-This repository houses the computational engine for a multidimensional socio-economic study on the **Stubble Burning Crisis** in North India. 
-
-Current policy treats agricultural fire as a criminal act. My research argues it is an **economic inevitability**. By combining high-frequency satellite telemetry with ground-level anthropological interviews, this project aims to quantify the "Time-Cost Squeeze" that forces farmers to burn, while measuring the exact ecological debt incurred per acre.
-
-**The Dimensions:**
-1.  **The Eye (Quantitative):** Real-time detection of "micro-fires" often missed by global datasets.
-2.  **The Voice (Qualitative):** Interviews with small-plot farmers to map the psychology of "The Burn."
-3.  **The Cost (Ecological):** Algorithmic conversion of thermal intensity (MW) into PM2.5 and CO2 output.
-
----
-
-## 🚀 The SATARK Engine
-
-SATARK (Sanskrit for *Alert*) is the technical backbone of this research. It is an autonomous "Hybrid Intelligence" network designed to validate satellite anomalies with semantic ground truth.
-
-### Core Architecture
-The system operates on a **Detect-Verify-Quantify** loop, bypassing the 4-6 hour latency of standard government reports.
-
-```mermaid
-graph TD
-    A[NASA VIIRS/MODIS] -->|Raw Thermal Data| B(SATARK Engine)
-    B -->|Filter Glint/Industrial| C{Llama 3.3 Guard}
-    C -->|Context: Mines vs Farms| D[Semantic Verification]
-    D -->|Valid Fire| E[Physics Kernel]
-    E -->|Calc: Biomass & Toxicity| F[Supabase DB]
-    F -->|Alert BDO/Admin| G[Real-Time Intervention]
-    F -->|Monthly Audit| H[Ecological Damage Report]
+>
 Key Technical Innovations1. The Llama 3 Border GuardStandard algorithms confuse steel mills for farm fires. SATARK implements an LLM-based filter (satark_cloud_v5.py):Logic: Uses meta-llama-3-70b-instruct to analyze geolocation context against OpenStreetMap tags.Function: Distinguishes "Industrial Heat" (Mines, Quarries) from "Biomass Combustion" (Farms) to reduce false positives.2. The Physics KernelWe don't just count fires; we measure consequence. The monthly_audit.py module implements:Wooster et al. (2005) Radiance Conversion: Converts Fire Radiative Power (MW) into Megajoules of energy.Emission Factors: Calculates precise tonnage of PM2.5 (Aerosol) and CO2 injected into the local atmosphere.📂 Codebase ManifestFileDescriptionsatark_cloud_v5.pyThe Scanner. Fetches NASA VIIRS data, runs the Llama 3 semantic check, and logs verified fires to Supabase.monthly_audit.pyThe Auditor. Generates a "Strategic Ecological Impact Report" using Llama 3.3, analyzing the monthly carbon footprint.weekly_intel.pyThe Aggregator. Compiles weekly fire trends for local block administration.requirements.txtCore dependencies: pandas, rasterio, openai, google-generativeai.📉 Preliminary Observations (Pilot Phase)The Latency Gap: SATARK detects fires ~4 hours faster than the local forest department communication chain.The "Micro-Fire" Phenomenon: 30% of fires detected in West Bengal are <50MW, often filtered out by global "high-confidence" masks but cumulatively toxic.The Human Factor: Early interviews indicate burning is correlated inversely with the availability of affordable labor, not awareness of pollution.⚡ Quick Start (Replication)Bash# Clone the repository
 git clone [https://github.com/reexxl1rafat/satark-research.git](https://github.com/reexxl1rafat/satark-research.git)
 
