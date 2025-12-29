@@ -37,17 +37,3 @@ graph TD
     F -->|Monthly Audit| H[Ecological Damage Report]
 
 
->
-Key Technical Innovations1. The Llama 3 Border GuardStandard algorithms confuse steel mills for farm fires. SATARK implements an LLM-based filter (satark_cloud_v5.py):Logic: Uses meta-llama-3-70b-instruct to analyze geolocation context against OpenStreetMap tags.Function: Distinguishes "Industrial Heat" (Mines, Quarries) from "Biomass Combustion" (Farms) to reduce false positives.2. The Physics KernelWe don't just count fires; we measure consequence. The monthly_audit.py module implements:Wooster et al. (2005) Radiance Conversion: Converts Fire Radiative Power (MW) into Megajoules of energy.Emission Factors: Calculates precise tonnage of PM2.5 (Aerosol) and CO2 injected into the local atmosphere.📂 Codebase ManifestFileDescriptionsatark_cloud_v5.pyThe Scanner. Fetches NASA VIIRS data, runs the Llama 3 semantic check, and logs verified fires to Supabase.monthly_audit.pyThe Auditor. Generates a "Strategic Ecological Impact Report" using Llama 3.3, analyzing the monthly carbon footprint.weekly_intel.pyThe Aggregator. Compiles weekly fire trends for local block administration.requirements.txtCore dependencies: pandas, rasterio, openai, google-generativeai.📉 Preliminary Observations (Pilot Phase)The Latency Gap: SATARK detects fires ~4 hours faster than the local forest department communication chain.The "Micro-Fire" Phenomenon: 30% of fires detected in West Bengal are <50MW, often filtered out by global "high-confidence" masks but cumulatively toxic.The Human Factor: Early interviews indicate burning is correlated inversely with the availability of affordable labor, not awareness of pollution.⚡ Quick Start (Replication)Bash# Clone the repository
-git clone [https://github.com/reexxl1rafat/satark-research.git](https://github.com/reexxl1rafat/satark-research.git)
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Set Environment Variables (NASA FIRMS + OpenAI/OpenRouter)
-export NASA_KEY="your_key"
-export OPENROUTER_API_KEY="your_key"
-
-# Run a Sector Scan
-python satark_cloud_v5.py
-📜 CitationIf you utilize the code, dataset, or methodology, please cite the ongoing research:Sk Reezaal Arafat (2025).The Combustion Paradox: Deconstructing the Socio-Economic Drivers and Multidimensional Ecological Flux of India’s Stubble Crisis [Pre-print/Field Notes].Built with rage and hope in the paddy fields of West Bengal.
