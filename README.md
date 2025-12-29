@@ -8,7 +8,7 @@
 > **"You cannot arrest a million farmers for doing the math of survival. A ban is just a piece of paper against a wall of fire. If the economics force them to burn, we don't need police—we need a better equation."**
 
 ## 📖 The Research Thesis
-This repository houses the computational engine for a multidimensional socio-economic study on the **Stubble Burning Crisis** in North India. 
+This repository houses the computational engine for a multidimensional socio-economic study on the **Stubble Burning Crisis** in  India. 
 
 Current policy treats agricultural fire as a criminal act. My research argues it is an **economic inevitability**. By combining high-frequency satellite telemetry with ground-level anthropological interviews, this project aims to quantify the "Time-Cost Squeeze" that forces farmers to burn, while measuring the exact ecological debt incurred per acre.
 
