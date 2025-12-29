@@ -178,9 +178,9 @@ def scan_sector():
     base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
     
     satellites = {
-        "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOX}/1",
-        "VIIRS_NOAA": f"{base_url}/{NASA_KEY}/VIIRS_NOAA20_NRT/{INDIA_BOX}/1",
-        "MODIS": f"{base_url}/{NASA_KEY}/MODIS_NRT/{INDIA_BOX}/1"
+        "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOX}/3",
+        "VIIRS_NOAA": f"{base_url}/{NASA_KEY}/VIIRS_NOAA20_NRT/{INDIA_BOX}/3",
+        "MODIS": f"{base_url}/{NASA_KEY}/MODIS_NRT/{INDIA_BOX}/3"
     }
     
     all_fires = []
@@ -276,3 +276,4 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
+
