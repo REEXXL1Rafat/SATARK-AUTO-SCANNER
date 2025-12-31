@@ -1,9 +1,9 @@
-name: SATARK Sentinel
+name: SATARK Research Scanner
 
 on:
   schedule:
     - cron: '*/30 * * * *'  # Runs every 30 minutes
-  workflow_dispatch:        # Allows you to click a "Run Now" button
+  workflow_dispatch:        # Manual Run Button
 
 jobs:
   scan_mission:
@@ -11,24 +11,23 @@ jobs:
     
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.11'  # Upgraded for Pandas/Numpy speed
         
     - name: Install Tools
       run: |
         pip install -r requirements.txt
         
-    - name: Run SATARK Scanner
+    - name: Run SATARK V13.2
       env:
         NASA_KEY: ${{ secrets.NASA_KEY }}
-        GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # <--- CRITICAL ADDITION
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       run: python satark_cloud_v5.py
