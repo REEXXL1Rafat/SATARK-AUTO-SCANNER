@@ -1,6 +1,11 @@
-requests
-pandas
-numpy
-google-generativeai
-openai
+
+google-genai
+
 rasterio
+requests==2.31.0
+pandas==2.2.0
+numpy==1.26.3
+boto3==1.34.0
+botocore==1.34.0
+netCDF4==1.6.5
+openai==1.10.0
