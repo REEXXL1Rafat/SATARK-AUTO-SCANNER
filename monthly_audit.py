@@ -3,11 +3,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import requests
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from datetime import datetime
+from datetime import datetime, timedelta
 from openai import OpenAI
 
 # ==========================================
@@ -15,12 +16,12 @@ from openai import OpenAI
 # ==========================================
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY") # <--- Llama needs this
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY") 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 GMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
-RECIPIENT_EMAIL = "reezaalarafat@gmail.com"
+RECIPIENT_EMAIL = "reezaalarafat@gmail.com" # Change if needed
 
-# AI Client (OpenRouter)
+# AI Client
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
@@ -30,97 +31,126 @@ def fetch_monthly_data():
     print("📡 Fetching Monthly Data from Supabase...")
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
     
-    # Get 1st day of current month
-    today = datetime.now()
-    first_day = today.replace(day=1, hour=0, minute=0, second=0).isoformat()
+    all_data = []
+    offset = 0
+    batch_size = 1000
     
-    # Fetch all fires active this month
-    url = f"{SUPABASE_URL}/rest/v1/fires?select=*&last_seen=gte.{first_day}"
+    while True:
+        url = f"{SUPABASE_URL}/rest/v1/fires?select=*&offset={offset}&limit={batch_size}"
+        try:
+            r = requests.get(url, headers=headers)
+            data = r.json()
+            if not data: break
+            all_data.extend(data)
+            offset += batch_size
+            print(f"   Fetched {len(all_data)} rows...", end="\r")
+        except Exception as e:
+            print(f"❌ DB Error: {e}")
+            break
+            
+    return pd.DataFrame(all_data) if all_data else pd.DataFrame()
+
+def wipe_database():
+    """
+    CRITICAL: Deletes all data to reset for the new month.
+    Only runs if email was successful.
+    """
+    print("\n🧹 STARTING DATABASE CLEANUP...")
+    headers = {
+        "apikey": SUPABASE_KEY, 
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Prefer": "return=minimal"
+    }
+    
+    # DELETE condition: ID > 0 (Deletes everything)
+    url = f"{SUPABASE_URL}/rest/v1/fires?id=gt.0"
     
     try:
-        r = requests.get(url, headers=headers)
-        data = r.json()
-        return pd.DataFrame(data) if data else pd.DataFrame()
+        r = requests.delete(url, headers=headers)
+        if r.status_code in [200, 204]:
+            print("✅ Database Wiped Successfully. Ready for next month.")
+        else:
+            print(f"❌ Wipe Failed: {r.status_code} {r.text}")
     except Exception as e:
-        print(f"❌ DB Error: {e}")
-        return pd.DataFrame()
+        print(f"❌ Wipe Error: {e}")
 
 def apply_thesis_physics(df):
     """
-    CONVERTS SATELLITE WATTS -> REAL WORLD EMISSIONS
-    Citation: Wooster et al. (2005), Andreae (2019)
+    Adds the Thesis Calculations (CO2, PM2.5, Energy)
     """
     if df.empty: return df
     
-    # 1. DATA CLEANING
-    if 'frp_mw' not in df.columns: df['frp_mw'] = 0.0
+    # Ensure float conversion
+    df['frp_mw'] = pd.to_numeric(df['frp_mw'], errors='coerce').fillna(0.0)
     
-    # 2. PHYSICS CALCULATION
-    # Energy (MJ) = MW * Duration (Assuming 1 hr snapshot = 3600s)
+    # 1. Energy Calculation (Joules)
+    # Fire Radiative Energy (MJ) = MW * Duration (Assuming 3600s for persistence)
     df['energy_mj'] = df['frp_mw'] * 3600 
     
-    # Biomass Burnt (Tonnes) = MJ * 0.368 (Combustion Coefficient) / 1000
-    df['biomass_tonnes'] = (df['energy_mj'] * 0.368) / 1000
+    # 2. Biomass Consumption (Seiler & Crutzen, 1980)
+    # Biomass (kg) = FRE (MJ) * 0.41 kg/MJ
+    df['biomass_tonnes'] = (df['energy_mj'] * 0.41) / 1000
     
-    # 3. EMISSION ESTIMATES (Ag Residue Factors)
+    # 3. Emissions (Akagi et al., 2011 for Ag Residue)
+    # CO2 = 1585 g/kg biomass
+    # PM2.5 = 6.3 g/kg biomass
     df['co2_tonnes'] = df['biomass_tonnes'] * 1.585
-    df['pm25_kg'] = df['biomass_tonnes'] * 6.26
+    df['pm25_kg'] = df['biomass_tonnes'] * 6.3
     
     return df
 
 def get_ai_report(stats):
-    """
-    Uses Llama 3.3 to write a Thesis-Grade Ecological Report.
-    """
     try:
         prompt = f"""
-        ACT AS: Senior Atmospheric Physicist & Ecologist.
+        ACT AS: Senior Atmospheric Scientist.
+        CONTEXT: Monthly audit of stubble burning in India (SATARK Thesis Data).
         
-        INPUT DATA (West Bengal Sector, {datetime.now().strftime('%B %Y')}):
-        - Total Fire Events: {stats['count']}
-        - Peak Thermal Intensity: {stats['max_mw']:.1f} MW
-        - Estimated Biomass Incinerated: {stats['biomass']:.1f} Tonnes
-        - CO2 Injection (Atmosphere): {stats['co2']:.1f} Tonnes
-        - PM2.5 Aerosol Load (Toxic Smog): {stats['pm25']:.1f} kg
+        DATA:
+        - Events: {stats['count']}
+        - Max Intensity: {stats['max_mw']:.1f} MW
+        - Est. Biomass Burnt: {stats['biomass']:.1f} Tonnes
+        - CO2 Emitted: {stats['co2']:.1f} Tonnes
+        - PM2.5 Load: {stats['pm25']:.1f} kg
         
-        TASK: Write a "Monthly Strategic Ecological Impact Report" (Markdown).
+        TASK: Write a 'Strategic Research Impact Report'.
+        1. **Trend Analysis**: Interpret the severity.
+        2. **Toxicology**: Impact of {stats['pm25']:.1f} kg PM2.5 on local populations.
+        3. **Thesis Validation**: How this data proves the "Evening Fire" hypothesis (fires occurring > 4PM).
         
-        SECTIONS REQUIRED:
-        1. **Executive Summary**: High-level overview of the fire season severity based on the data.
-        2. **Atmospheric Toxicity & Public Health**: 
-           - Analyze the PM2.5 load ({stats['pm25']:.1f} kg). 
-           - Explain the health risks (respiratory/cardiovascular) to the local population.
-           - Mention "Aerosol Optical Depth (AOD)" implications.
-        3. **Ecological Damage Assessment**: 
-           - Discuss the carbon footprint ({stats['co2']:.1f} Tonnes CO2).
-           - Mention soil degradation (loss of Nitrogen/Phosphorus) due to stubble burning.
-        4. **Strategic Intervention**: 
-           - Suggest 2 science-backed solutions (e.g., Happy Seeder technology, Bio-decomposers) to reduce next month's numbers.
-        
-        TONE: Scientific, Urgent, Data-Driven. Use bullet points.
+        KEEP IT STRICT, SCIENTIFIC, AND BRIEF (Markdown).
         """
         
-        # SWITCHING TO LLAMA 3.3
         completion = client.chat.completions.create(
             model="meta-llama/llama-3.3-70b-instruct:free",
             messages=[{"role": "user", "content": prompt}]
         )
         return completion.choices[0].message.content
-    except Exception as e:
-        print(f"AI Error: {e}")
-        return "AI Analysis Unavailable due to API limits."
+    except:
+        return "AI Analysis Offline."
 
-def send_email(report_path, map_path, csv_path):
-    if not SENDER_EMAIL: return
+def send_email(report_path, map_path, raw_csv_path, thesis_csv_path):
+    if not SENDER_EMAIL: return False
     
     msg = MIMEMultipart()
     msg['From'] = SENDER_EMAIL
     msg['To'] = RECIPIENT_EMAIL
-    msg['Subject'] = f"🚨 SATARK ECOLOGICAL AUDIT: {datetime.now().strftime('%B %Y')}"
-    msg.attach(MIMEText("Attached: Monthly Ecological Damage Report & Raw Thesis Data.", 'plain'))
+    msg['Subject'] = f"📑 SATARK MONTHLY DATA: {datetime.now().strftime('%B %Y')}"
     
-    # Attach Map, Report, and CSV
-    for fpath in [report_path, map_path, csv_path]:
+    body = """
+    ATTACHED:
+    1. 📄 RAW_DB_DATA.csv (Direct from Supabase - Source of Truth)
+    2. 🧪 THESIS_PHYSICS.csv (Processed with Emission Calculations)
+    3. 🗺️ Intensity Map (.png)
+    4. 🤖 AI Impact Report (.md)
+    
+    NOTE: Database will be WIPED after this email is delivered to reset storage.
+    """
+    msg.attach(MIMEText(body, 'plain'))
+    
+    # Attachments
+    files_to_attach = [report_path, map_path, raw_csv_path, thesis_csv_path]
+    
+    for fpath in files_to_attach:
         if os.path.exists(fpath):
             with open(fpath, "rb") as f:
                 part = MIMEBase("application", "octet-stream")
@@ -134,57 +164,67 @@ def send_email(report_path, map_path, csv_path):
             s.starttls()
             s.login(SENDER_EMAIL, GMAIL_PASSWORD)
             s.send_message(msg)
-        print("✅ Audit Email Sent.")
+        print("✅ Email Sent Successfully.")
+        return True
     except Exception as e:
-        print(f"❌ Email Error: {e}")
+        print(f"❌ Email Failed: {e}")
+        return False
 
 def run_audit():
-    print(f"🚀 SATARK MONTHLY AUDIT (LLAMA EDITION) | {datetime.now().strftime('%Y-%m')}")
+    print(f"🚀 SATARK AUDIT PROTOCOL | {datetime.now().strftime('%Y-%m')}")
+    os.makedirs('audit_out', exist_ok=True)
     
-    # 1. FETCH & CALCULATE
+    # 1. FETCH RAW DATA
     df = fetch_monthly_data()
     if df.empty:
-        print("⚠️ No data found for this month.")
+        print("⚠️ Database empty. Nothing to report.")
         return
 
-    df = apply_thesis_physics(df)
+    # 2. SAVE RAW CSV (Dataset A - The Evidence)
+    raw_csv_file = f"audit_out/SATARK_RAW_DB_{datetime.now().strftime('%Y-%m')}.csv"
+    df.to_csv(raw_csv_file, index=False)
+    print(f"💾 Raw DB Data Saved ({len(df)} rows)")
+
+    # 3. APPLY PHYSICS & SAVE THESIS CSV (Dataset B - The Science)
+    df_physics = apply_thesis_physics(df.copy())
+    thesis_csv_file = f"audit_out/SATARK_THESIS_PHYSICS_{datetime.now().strftime('%Y-%m')}.csv"
+    df_physics.to_csv(thesis_csv_file, index=False)
+    print(f"🧪 Physics Calculations Applied & Saved")
     
-    # 2. GENERATE MAP (Heat Intensity)
+    # 4. MAP GENERATION (Using Physics Data)
     plt.figure(figsize=(10, 8), facecolor='#121212')
     ax = plt.axes(); ax.set_facecolor("#121212")
+    sc = plt.scatter(df_physics['lon'], df_physics['lat'], c=df_physics['frp_mw'], cmap='plasma', s=40, alpha=0.9)
+    plt.colorbar(sc, label='Fire Intensity (MW)')
+    plt.title(f"FIRE DENSITY | {datetime.now().strftime('%B %Y')}", color='white')
     
-    # Plot: X=Lon, Y=Lat, Color=Watts
-    sc = plt.scatter(df['lon'], df['lat'], c=df['frp_mw'], cmap='inferno', s=60, alpha=0.8)
-    plt.colorbar(sc, label='Fire Radiative Power (MW)')
-    plt.title(f"THERMAL INTENSITY MAP | {datetime.now().strftime('%B %Y')}", color='white')
-    
-    os.makedirs('audit_out', exist_ok=True)
     map_file = "audit_out/intensity_map.png"
     plt.savefig(map_file, dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 3. GENERATE REPORT
+    # 5. AI REPORT
     stats = {
-        'count': len(df),
-        'max_mw': df['frp_mw'].max(),
-        'biomass': df['biomass_tonnes'].sum(),
-        'co2': df['co2_tonnes'].sum(),
-        'pm25': df['pm25_kg'].sum()
+        'count': len(df_physics),
+        'max_mw': df_physics['frp_mw'].max(),
+        'biomass': df_physics['biomass_tonnes'].sum(),
+        'co2': df_physics['co2_tonnes'].sum(),
+        'pm25': df_physics['pm25_kg'].sum()
     }
-    print("🤖 Consulting Llama 3.3 for Ecological Analysis...")
     ai_text = get_ai_report(stats)
     
     report_file = "audit_out/report.md"
     with open(report_file, "w") as f:
-        f.write(f"# SATARK ECOLOGICAL DAMAGE ASSESSMENT\n\n{ai_text}")
+        f.write(f"# SATARK MONTHLY DATA\n\n{ai_text}")
 
-    # 4. EXPORT DATA (For your Thesis backup)
-    csv_file = f"audit_out/data_{datetime.now().strftime('%Y-%m')}.csv"
-    df.to_csv(csv_file, index=False)
-
-    # 5. DISPATCH
-    send_email(report_file, map_file, csv_file)
-    print("✅ Audit Complete.")
+    # 6. SEND & WIPE
+    success = send_email(report_file, map_file, raw_csv_file, thesis_csv_file)
+    
+    if success:
+        print("🔒 Security Protocol: Wiping Cloud Database...")
+        wipe_database()
+        print("👋 System Reset Complete. See you next month.")
+    else:
+        print("⚠️ Email Failed. Database preserved for safety.")
 
 if __name__ == "__main__":
     run_audit()
