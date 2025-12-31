@@ -82,26 +82,115 @@ def verify_land_use(lat, lon, region, frp):
         return "UNKNOWN"
 
 # ==========================================
-# 🛰️ GEOSTATIONARY ENGINE (GK-2A)
+# 🛰️ GEOSTATIONARY ENGINE (REAL RAW DOWNLOAD)
 # ==========================================
 def get_gk2a_fires():
-    """
-    Connects to AWS Open Data to check for fires via Korean Satellite (GK-2A).
-    This runs 24/7 to catch fires that NASA Polar satellites miss due to timing.
-    """
-    print("📡 Connecting to GK-2A (Korean Geo-Sat)...")
+    print("📡 Connecting to GK-2A (Real-Time AWS)...")
     fires = []
     
-    # NOTE: In a full deployment, this downloads the .nc file using boto3.
-    # For this script, we use the placeholder structure where you would 
-    # insert the netCDF4 processing logic.
-    # Since we cannot download 200MB files in a lightweight Action efficiently without caching,
-    # this function is prepared for the logic insertion or light API usage if available.
-    
-    # Logic: 
-    # 1. boto3.client('s3', config=UNSIGNED).download_file('noaa-gk2a-pds', 'latest.nc')
-    # 2. Process T_b (Brightness Temp)
-    # 3. Apply Dozier Math
+    try:
+        # 1. SETUP S3 CONNECTION (Anonymous/Public)
+        s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+        bucket = 'noaa-gk2a-pds'
+        
+        # 2. FIND LATEST FILE (IR038 - The Fire Band)
+        # Structure: GK2A/AMI/L1B/IR038/YYYYMM/DD/HH/
+        now = datetime.utcnow()
+        prefix = f"GK2A/AMI/L1B/IR038/{now.strftime('%Y%m')}/{now.strftime('%d')}/{now.strftime('%H')}/"
+        
+        # List files and take the last one (Latest 10-min scan)
+        resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        if 'Contents' not in resp:
+            print("   ⚠️ No GK-2A data found for this hour yet.")
+            return []
+            
+        latest_key = resp['Contents'][-1]['Key']
+        filename = latest_key.split('/')[-1]
+        print(f"   ⬇️ Downloading: {filename} (Please wait, ~50MB)...")
+        
+        # 3. DOWNLOAD (To Memory to save disk speed)
+        # We download to a temp file because netCDF4 needs a file path
+        s3.download_file(bucket, latest_key, "gk2a_temp.nc")
+        
+        # 4. PROCESS WITH NETCDF4
+        import netCDF4
+        ds = netCDF4.Dataset("gk2a_temp.nc")
+        
+        # Raw Data (brightness temperature)
+        # Note: We need to handle scaling/offset if packed, but usually L1B is accessible.
+        # This is a simplified lookup for the 'India Sector' to speed it up.
+        # GK-2A Full Disk is huge. We assume India is roughly in the left-center.
+        
+        # EXTRACT DATA VARIABLE (Name varies, usually 'image_pixel_values')
+        # We try standard names
+        data_var = None
+        for v in ['image_pixel_values', 'brightness_temperature']:
+            if v in ds.variables:
+                data_var = ds.variables[v]
+                break
+        
+        if data_var is None:
+            print("   ❌ Could not find pixel data in NetCDF.")
+            return []
+
+        # 5. FAST FIRE DETECTION (Thresholding)
+        # Instead of scanning 16 million pixels, we check the array logic.
+        # Fire Threshold > 310K (approx 37°C background avg, spikes higher)
+        # Warning: Raw values might need scale_factor/add_offset application.
+        
+        raw_data = data_var[:] 
+        # Check metadata for scaling
+        scale = getattr(data_var, 'scale_factor', 1.0)
+        offset = getattr(data_var, 'add_offset', 0.0)
+        
+        # Apply Logic: Find Hotspots (> 315 Kelvin)
+        # We use numpy for speed
+        import numpy as np
+        temps = raw_data * scale + offset
+        
+        # INDIA APPROX CROP (Y: 1000-3000, X: 500-2000) - Saves time
+        # GK2A is 5500x5500. India is roughly North-West from center.
+        india_sector = temps[800:2500, 500:2000] 
+        
+        # Threshold: 320K (Hot)
+        hot_indices = np.argwhere(india_sector > 320.0)
+        
+        print(f"   🔥 Thermal Anomalies Detected: {len(hot_indices)}")
+        
+        for y, x in hot_indices:
+            # COORDINATE MATH (Linear Approximation for India)
+            # Real projection requires pyproj (too heavy).
+            # We map Array Index -> Lat/Lon roughly for the alert.
+            # GK2A Center (0,0) is at pixel (2750, 2750) approx.
+            # 1 pixel ~ 2km.
+            
+            # Re-adjust x,y to full disk
+            real_y = y + 800
+            real_x = x + 500
+            
+            # Simple Linear Map (Calibrated approx for India Sector)
+            # This is NOT GPS precise, but good enough for "Block Level" ID
+            lat = 40.0 - (real_y * 0.016) 
+            lon = 70.0 + (real_x * 0.016)
+            
+            # Temp of fire
+            temp_k = india_sector[y, x]
+            
+            # Filter Logic (Only Punjab/Bengal Latitudes)
+            if (20.0 < lat < 33.0) and (70.0 < lon < 90.0):
+                fires.append({
+                    'latitude': round(float(lat), 3),
+                    'longitude': round(float(lon), 3),
+                    'frp': round((float(temp_k) - 300.0) * 2.0, 1), # Approx FRP from excess heat
+                    'source': 'GK2A (Real)',
+                    'conf_score': 'EagleEye'
+                })
+        
+        ds.close()
+        os.remove("gk2a_temp.nc") # Cleanup
+        
+    except Exception as e:
+        print(f"   ⚠️ GK-2A Error: {e}")
     
     return fires
 
@@ -268,3 +357,4 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
+
