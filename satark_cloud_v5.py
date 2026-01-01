@@ -1,4 +1,5 @@
 import requests
+from requests.adapters import HTTPAdapter, Retry
 import pandas as pd
 import os
 import time
@@ -7,7 +8,7 @@ import math
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from datetime import datetime
+from datetime import datetime, timedelta
 from openai import OpenAI
 
 # ==========================================
@@ -33,6 +34,19 @@ client = OpenAI(
 
 # 🌍 INDIA BOUNDING BOX
 INDIA_BOX_NASA = "68,6,98,38"
+
+# ==========================================
+# 🔌 ROBUST DATABASE SESSION (FIX FOR CRASH)
+# ==========================================
+# Creates a reusable connection pool. Prevents "RemoteDisconnected" errors.
+db_session = requests.Session()
+retries = Retry(total=5, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+db_session.mount('https://', HTTPAdapter(max_retries=retries))
+db_session.headers.update({
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+})
 
 # ==========================================
 # 🗺️ REGION INTELLIGENCE
@@ -61,8 +75,8 @@ def verify_land_use(lat, lon, region, frp):
     out tags;
     """
     try:
-        time.sleep(1) 
-        r = requests.get(url, params={'data': query}, timeout=10)
+        # Use the session here too for stability
+        r = db_session.get(url, params={'data': query}, timeout=10)
         if r.status_code != 200: return "UNKNOWN"
         
         data = r.json()
@@ -82,47 +96,46 @@ def verify_land_use(lat, lon, region, frp):
         return "UNKNOWN"
 
 # ==========================================
-# 🛰️ GEOSTATIONARY ENGINE (REAL RAW DOWNLOAD)
+# 🛰️ GEOSTATIONARY ENGINE (WITH BACKFILL)
 # ==========================================
 def get_gk2a_fires():
     print("📡 Connecting to GK-2A (Real-Time AWS)...")
     fires = []
     
     try:
-        # 1. SETUP S3 CONNECTION (Anonymous/Public)
-        s3 = boto3.client('s3', config=Config(signature_version=UNSIGNED))
+        s3 = boto3.client('s3', region_name='us-east-1', config=Config(signature_version=UNSIGNED))
         bucket = 'noaa-gk2a-pds'
         
-        # 2. FIND LATEST FILE (IR038 - The Fire Band)
-        # Structure: GK2A/AMI/L1B/IR038/YYYYMM/DD/HH/
+        # Logic: Check Current Hour -> If empty, Check Previous Hour
         now = datetime.utcnow()
-        prefix = f"GK2A/AMI/L1B/IR038/{now.strftime('%Y%m')}/{now.strftime('%d')}/{now.strftime('%H')}/"
         
-        # List files and take the last one (Latest 10-min scan)
-        resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        def list_files(dt):
+            prefix = f"GK2A/AMI/L1B/IR038/{dt.strftime('%Y%m')}/{dt.strftime('%d')}/{dt.strftime('%H')}/"
+            return s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+
+        # Attempt 1
+        resp = list_files(now)
+        
+        # Attempt 2 (Backfill)
         if 'Contents' not in resp:
-            print("   ⚠️ No GK-2A data found for this hour yet.")
+            print(f"   ⚠️ No data for {now.strftime('%H')}:00. Checking backfill...")
+            prev_hour = now - timedelta(hours=1)
+            resp = list_files(prev_hour)
+
+        if 'Contents' not in resp:
+            print("   ❌ GK-2A Blind: No Data on AWS for last 2 hours.")
             return []
             
         latest_key = resp['Contents'][-1]['Key']
         filename = latest_key.split('/')[-1]
-        print(f"   ⬇️ Downloading: {filename} (Please wait, ~50MB)...")
+        print(f"   ⬇️ Downloading: {filename} (~50MB)...")
         
-        # 3. DOWNLOAD (To Memory to save disk speed)
-        # We download to a temp file because netCDF4 needs a file path
         s3.download_file(bucket, latest_key, "gk2a_temp.nc")
         
-        # 4. PROCESS WITH NETCDF4
         import netCDF4
+        import numpy as np
         ds = netCDF4.Dataset("gk2a_temp.nc")
         
-        # Raw Data (brightness temperature)
-        # Note: We need to handle scaling/offset if packed, but usually L1B is accessible.
-        # This is a simplified lookup for the 'India Sector' to speed it up.
-        # GK-2A Full Disk is huge. We assume India is roughly in the left-center.
-        
-        # EXTRACT DATA VARIABLE (Name varies, usually 'image_pixel_values')
-        # We try standard names
         data_var = None
         for v in ['image_pixel_values', 'brightness_temperature']:
             if v in ds.variables:
@@ -130,64 +143,36 @@ def get_gk2a_fires():
                 break
         
         if data_var is None:
-            print("   ❌ Could not find pixel data in NetCDF.")
             return []
 
-        # 5. FAST FIRE DETECTION (Thresholding)
-        # Instead of scanning 16 million pixels, we check the array logic.
-        # Fire Threshold > 310K (approx 37°C background avg, spikes higher)
-        # Warning: Raw values might need scale_factor/add_offset application.
-        
         raw_data = data_var[:] 
-        # Check metadata for scaling
         scale = getattr(data_var, 'scale_factor', 1.0)
         offset = getattr(data_var, 'add_offset', 0.0)
-        
-        # Apply Logic: Find Hotspots (> 315 Kelvin)
-        # We use numpy for speed
-        import numpy as np
         temps = raw_data * scale + offset
         
-        # INDIA APPROX CROP (Y: 1000-3000, X: 500-2000) - Saves time
-        # GK2A is 5500x5500. India is roughly North-West from center.
         india_sector = temps[800:2500, 500:2000] 
+        hot_indices = np.argwhere(india_sector > 312.0)
         
-        # Threshold: 320K (Hot)
-        hot_indices = np.argwhere(india_sector > 320.0)
-        
-        print(f"   🔥 Thermal Anomalies Detected: {len(hot_indices)}")
+        print(f"   🔥 Thermal Anomalies: {len(hot_indices)}")
         
         for y, x in hot_indices:
-            # COORDINATE MATH (Linear Approximation for India)
-            # Real projection requires pyproj (too heavy).
-            # We map Array Index -> Lat/Lon roughly for the alert.
-            # GK2A Center (0,0) is at pixel (2750, 2750) approx.
-            # 1 pixel ~ 2km.
-            
-            # Re-adjust x,y to full disk
             real_y = y + 800
             real_x = x + 500
-            
-            # Simple Linear Map (Calibrated approx for India Sector)
-            # This is NOT GPS precise, but good enough for "Block Level" ID
             lat = 40.0 - (real_y * 0.016) 
             lon = 70.0 + (real_x * 0.016)
-            
-            # Temp of fire
             temp_k = india_sector[y, x]
             
-            # Filter Logic (Only Punjab/Bengal Latitudes)
             if (20.0 < lat < 33.0) and (70.0 < lon < 90.0):
                 fires.append({
                     'latitude': round(float(lat), 3),
                     'longitude': round(float(lon), 3),
-                    'frp': round((float(temp_k) - 300.0) * 2.0, 1), # Approx FRP from excess heat
+                    'frp': round((float(temp_k) - 300.0) * 2.0, 1),
                     'source': 'GK2A (Real)',
                     'conf_score': 'EagleEye'
                 })
         
         ds.close()
-        os.remove("gk2a_temp.nc") # Cleanup
+        if os.path.exists("gk2a_temp.nc"): os.remove("gk2a_temp.nc")
         
     except Exception as e:
         print(f"   ⚠️ GK-2A Error: {e}")
@@ -195,36 +180,26 @@ def get_gk2a_fires():
     return fires
 
 # ==========================================
-# 🧠 SMART DATABASE (DYNAMIC MERGE)
+# 🧠 SMART DATABASE (SESSION POWERED)
 # ==========================================
 def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidence):
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # === DYNAMIC SEARCH RADIUS ===
-    # IF GK-2A (Blurry): Look 2.5km to snap to a specific Polar fire.
-    # IF VIIRS (Sharp): Look 0.1km (Research Grade) to find neighbor fires.
-    search_radius = 0.025 if "GK2A" in source else 0.001
+    # Using 'db_session' here prevents creating 3000 new connections.
     
+    search_radius = 0.025 if "GK2A" in source else 0.001
     lat_min, lat_max = lat - search_radius, lat + search_radius
     lon_min, lon_max = lon - search_radius, lon + search_radius
     
     check_url = f"{SUPABASE_URL}/rest/v1/fires?lat=gte.{lat_min}&lat=lte.{lat_max}&lon=gte.{lon_min}&lon=lte.{lon_max}&select=*"
     
     try:
-        r = requests.get(check_url, headers=headers)
+        # GET using Session
+        r = db_session.get(check_url, timeout=10)
         existing_fires = r.json() if r.status_code == 200 else []
         
         match = None
         for f in existing_fires:
             dist_km = math.sqrt((f['lat'] - lat)**2 + (f['lon'] - lon)**2) * 111
-            
-            # Use the Dynamic Threshold
             limit_km = 2.5 if "GK2A" in source else 0.1
-            
             if dist_km < limit_km: 
                 match = f
                 break
@@ -232,7 +207,7 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
         now_time = datetime.utcnow().isoformat()
         
         if match:
-            # === MERGE (Preserve First Seen, Update Last Seen) ===
+            # === MERGE ===
             print(f"   🔄 Merging with Event {match['id']}...")
             row_id = match['id']
             old_src = match.get('source', '')
@@ -245,10 +220,11 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
                 "source": new_source,
                 "alert_count": match.get('alert_count', 1) + 1
             }
-            requests.patch(f"{SUPABASE_URL}/rest/v1/fires?id=eq.{row_id}", headers=headers, json=payload)
+            # PATCH using Session
+            db_session.patch(f"{SUPABASE_URL}/rest/v1/fires?id=eq.{row_id}", json=payload, timeout=10)
             return False 
         else:
-            # === INSERT NEW (Set First Seen) ===
+            # === INSERT ===
             pixel_size = 2000000 if "GK2A" in source else 375000
             est_area = (pixel_size * cluster_size) * 0.15
             
@@ -264,11 +240,13 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
                 "confidence": str(confidence),
                 "est_area_m2": est_area
             }
-            requests.post(f"{SUPABASE_URL}/rest/v1/fires", headers=headers, json=payload)
+            # POST using Session
+            db_session.post(f"{SUPABASE_URL}/rest/v1/fires", json=payload, timeout=10)
             return True 
 
     except Exception as e:
         print(f"DB Error: {e}")
+        time.sleep(1) 
         return False
 
 # ==========================================
@@ -298,7 +276,7 @@ def scan_sector():
     print(f"\n🚀 SATARK V13.2 SENTINEL | {datetime.now().strftime('%H:%M:%S')}")
     all_fires = []
 
-    # 1. POLAR (NASA) - THE SHARP EYE
+    # 1. POLAR (NASA)
     base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
     nasa_sats = {
         "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOX_NASA}/1",
@@ -321,7 +299,7 @@ def scan_sector():
                     print(f"✅ {len(df)} Points")
         except: pass
 
-    # 2. GEO (GK-2A) - THE ALWAYS-ON EYE
+    # 2. GEO (GK-2A)
     gk_data = get_gk2a_fires()
     if gk_data: all_fires.append(pd.DataFrame(gk_data))
 
@@ -338,16 +316,13 @@ def scan_sector():
         source = f['source']
         region = get_region_tag(lat, lon)
         
-        # Ground Truth Filter
         land_type = verify_land_use(lat, lon, region, frp)
         if land_type in ["INDUSTRY", "WATER"]: continue
         if frp > 500 and land_type != "FARM": continue
 
-        # Save & Alert
         is_new = save_fire_event_smart(lat, lon, source, 1, region, frp, f.get('conf_score', 'Low'))
         
         if is_new:
-            # Alert Logic (Bengal always, others if big)
             if region == "WEST_BENGAL" or frp > 50.0:
                 print(f"   🔥 ALERT: {region} | {frp}MW")
                 ai_msg = analyze_with_ai(lat, lon, region, frp)
@@ -357,4 +332,3 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
-
