@@ -180,11 +180,10 @@ def get_gk2a_fires():
     return fires
 
 # ==========================================
-# 🧠 SMART DATABASE (SESSION POWERED)
+# 🧠 SMART DATABASE (SANITIZED & DEBUGGED)
 # ==========================================
 def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidence):
-    # Using 'db_session' here prevents creating 3000 new connections.
-    
+    # 1. SETUP SESSION & SEARCH
     search_radius = 0.025 if "GK2A" in source else 0.001
     lat_min, lat_max = lat - search_radius, lat + search_radius
     lon_min, lon_max = lon - search_radius, lon + search_radius
@@ -192,7 +191,7 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
     check_url = f"{SUPABASE_URL}/rest/v1/fires?lat=gte.{lat_min}&lat=lte.{lat_max}&lon=gte.{lon_min}&lon=lte.{lon_max}&select=*"
     
     try:
-        # GET using Session
+        # 2. CHECK EXISTING (GET)
         r = db_session.get(check_url, timeout=10)
         existing_fires = r.json() if r.status_code == 200 else []
         
@@ -206,13 +205,27 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
         
         now_time = datetime.utcnow().isoformat()
         
+        # 🛡️ THE SANITIZER (The Fix for 400 Errors)
+        # Prevents "NaN" from crashing Supabase
+        def safe_float(val):
+            try:
+                f_val = float(val)
+                if math.isnan(f_val) or math.isinf(f_val): return 0.0
+                return f_val
+            except: return 0.0
+
+        clean_frp = safe_float(frp)
+        clean_lat = safe_float(lat)
+        clean_lon = safe_float(lon)
+
         if match:
             # === MERGE ===
             print(f"   🔄 Merging with Event {match['id']}...")
             row_id = match['id']
             old_src = match.get('source', '')
             new_source = old_src if source in old_src else f"{old_src}, {source}"
-            new_frp = max(float(match.get('frp_mw', 0)), float(frp))
+            # Ensure we don't overwrite a good reading with 0.0
+            new_frp = max(float(match.get('frp_mw', 0)), clean_frp)
             
             payload = {
                 "last_seen": now_time,
@@ -220,7 +233,6 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
                 "source": new_source,
                 "alert_count": match.get('alert_count', 1) + 1
             }
-            # PATCH using Session
             db_session.patch(f"{SUPABASE_URL}/rest/v1/fires?id=eq.{row_id}", json=payload, timeout=10)
             return False 
         else:
@@ -229,26 +241,32 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
             est_area = (pixel_size * cluster_size) * 0.15
             
             payload = {
-                "lat": float(lat),
-                "lon": float(lon),
+                "lat": clean_lat,
+                "lon": clean_lon,
                 "first_seen": now_time, 
                 "last_seen": now_time,
                 "source": source,
                 "alert_count": 1,
                 "location": region, 
-                "frp_mw": float(frp),
+                "frp_mw": clean_frp,
                 "confidence": str(confidence),
-                "est_area_m2": est_area
+                "est_area_m2": safe_float(est_area)
             }
-            # POST using Session
-            db_session.post(f"{SUPABASE_URL}/rest/v1/fires", json=payload, timeout=10)
+            
+            # POST with Error Reporting
+            r_post = db_session.post(f"{SUPABASE_URL}/rest/v1/fires", json=payload, timeout=10)
+            
+            # 🚨 IF THIS FAILS, PRINT WHY
+            if r_post.status_code not in [200, 201]:
+                print(f"   ❌ UPLOAD FAILED: {r_post.status_code}")
+                print(f"   ⚠️ REASON: {r_post.text}") # <--- This will tell us the exact error
+            
             return True 
 
     except Exception as e:
         print(f"DB Error: {e}")
         time.sleep(1) 
         return False
-
 # ==========================================
 # 🤖 AI ANALYST & ALERTS
 # ==========================================
@@ -332,3 +350,4 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
+
