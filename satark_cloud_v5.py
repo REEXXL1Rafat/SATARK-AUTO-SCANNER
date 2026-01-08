@@ -104,6 +104,7 @@ def verify_land_use(lat, lon, region, frp):
     except:
         return "UNKNOWN"
 
+
 # ==========================================
 # 🛰️ GEOSTATIONARY ENGINE (WITH BACKFILL)
 # ==========================================
@@ -112,6 +113,7 @@ def get_gk2a_fires():
     fires = []
     
     try:
+        #
         s3 = boto3.client('s3', region_name='us-east-1', config=Config(signature_version=UNSIGNED))
         bucket = 'noaa-gk2a-pds'
         
@@ -184,7 +186,7 @@ def get_gk2a_fires():
         print(f"   ⚠️ GK-2A Error: {e}")
     
     return fires
-
+    
 # ==========================================
 # 🧠 SMART DATABASE
 # ==========================================
@@ -602,5 +604,6 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
+
 
 
