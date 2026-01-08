@@ -253,19 +253,14 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
             }
             
             r_post = db_session.post(f"{SUPABASE_URL}/rest/v1/fires", json=payload, timeout=10)
-            if r_post.status_code not in [200, 201]:
-                print(f"   ❌ UPLOAD FAILED: {r_post.status_code}")
-                print(f"   ⚠️ REASON: {r_post.text}")
-            
             return True 
 
     except Exception as e:
         print(f"DB Error: {e}")
-        time.sleep(1) 
         return False
 
 # ==========================================
-# 🤖 AI ANALYST & BROADCAST SYSTEM
+# 🤖 AI ANALYST & BROADCAST
 # ==========================================
 def analyze_with_ai(lat, lon, region, frp):
     try:
@@ -279,27 +274,21 @@ def analyze_with_ai(lat, lon, region, frp):
         return "Confirmed Fire."
 
 def send_telegram_broadcast(msg):
-    """
-    Broadcasting Engine: Iterates through GitHub Secret IDs
-    """
-    print(f"🚀 Broadcasting Alert to {len(RECIPIENT_LIST)} targets...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    
+    print(f"🚀 Broadcasting Alert to {len(RECIPIENT_LIST)} targets...")
     for user_id in RECIPIENT_LIST:
         try:
             requests.post(url, json={"chat_id": user_id, "text": msg}, timeout=5)
-            print(f"   ✅ Sent to ID ending in ...{str(user_id)[-3:]}")
-        except Exception as e:
-            print(f"   ❌ Failed to send to ...{str(user_id)[-3:]}: {e}")
+        except: pass
 
 # ==========================================
-# 🚀 SATARK V13.4 (24/7 SENTINEL)
+# 🚀 SCAN ENGINE
 # ==========================================
 def scan_sector():
-    print(f"\n🚀 SATARK V13.4 SENTINEL | {datetime.now().strftime('%H:%M:%S')}")
+    print(f"\n🚀 SATARK SENTINEL | {datetime.now().strftime('%H:%M:%S')}")
     all_fires = []
 
-    # 1. POLAR (NASA)
+    # 1. POLAR
     base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
     nasa_sats = {
         "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOX_NASA}/1",
@@ -308,7 +297,6 @@ def scan_sector():
     }
     
     for sat_name, url in nasa_sats.items():
-        print(f"📡 Scanning {sat_name}...", end=" ")
         try:
             r = requests.get(url, timeout=30)
             if r.status_code == 200:
@@ -319,10 +307,9 @@ def scan_sector():
                     if 'frp' not in df.columns: df['frp'] = 0.0
                     df['conf_score'] = "100%"
                     all_fires.append(df)
-                    print(f"✅ {len(df)} Points")
         except: pass
 
-    # 2. GEO (GK-2A)
+    # 2. GEO
     gk_data = get_gk2a_fires()
     if gk_data: all_fires.append(pd.DataFrame(gk_data))
 
@@ -330,12 +317,13 @@ def scan_sector():
         print("✅ Sector Clear.")
         return
 
-   
-all_fires = [df for df in all_fires if not df.empty]
-if not all_fires:
-    print("✅ Sector Clear.")
-    return
-merged = pd.concat(all_fires, ignore_index=True)
+    # OG FIX: Clean empty DataFrames before concat
+    all_fires = [df for df in all_fires if not df.empty]
+    if not all_fires:
+        print("✅ Sector Clear.")
+        return
+
+    merged = pd.concat(all_fires, ignore_index=True)
     print(f"📊 Processing {len(merged)} Events...")
     
     for _, f in merged.iterrows():
@@ -360,10 +348,3 @@ merged = pd.concat(all_fires, ignore_index=True)
 
 if __name__ == "__main__":
     scan_sector()
-
-
-
-
-
-
-
