@@ -330,7 +330,12 @@ def scan_sector():
         print("✅ Sector Clear.")
         return
 
-    merged = pd.concat(all_fires)
+   
+all_fires = [df for df in all_fires if not df.empty]
+if not all_fires:
+    print("✅ Sector Clear.")
+    return
+merged = pd.concat(all_fires, ignore_index=True)
     print(f"📊 Processing {len(merged)} Events...")
     
     for _, f in merged.iterrows():
@@ -355,6 +360,7 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
+
 
 
 
