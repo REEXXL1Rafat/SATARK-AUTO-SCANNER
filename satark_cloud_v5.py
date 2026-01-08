@@ -105,27 +105,28 @@ def verify_land_use(lat, lon, region, frp):
         return "UNKNOWN"
 
 
-# ==========================================
-# 🛰️ GEOSTATIONARY ENGINE (WITH BACKFILL)
-# ==========================================
 def get_gk2a_fires():
     print("📡 Connecting to GK-2A (Real-Time AWS)...")
     fires = []
     
+    # --- MOVED OUTSIDE TRY BLOCK TO FIX INDENTATION ---
     try:
         s3 = boto3.client('s3', region_name='us-east-1', config=Config(signature_version=UNSIGNED))
         bucket = 'noaa-gk2a-pds'
-        
         now = datetime.utcnow()
-        
+    except Exception as e:
+        print(f"   ⚠️ Init Error: {e}")
+        return []
+
+    try:
+        # LOGIC START
         def list_files(dt):
             prefix = f"GK2A/AMI/L1B/IR038/{dt.strftime('%Y%m')}/{dt.strftime('%d')}/{dt.strftime('%H')}/"
             return s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
 
-        # Attempt 1
         resp = list_files(now)
         
-        # Attempt 2 (Backfill)
+        # Backfill Logic
         if 'Contents' not in resp:
             print(f"   ⚠️ No data for {now.strftime('%H')}:00. Checking backfill...")
             prev_hour = now - timedelta(hours=1)
@@ -187,8 +188,8 @@ def get_gk2a_fires():
         print(f"   ⚠️ GK-2A Error: {e}")
     
     return fires
-    
-    
+
+
 # ==========================================
 # 🧠 SMART DATABASE
 # ==========================================
@@ -606,6 +607,7 @@ def scan_sector():
 
 if __name__ == "__main__":
     scan_sector()
+
 
 
 
