@@ -15,7 +15,6 @@ from openai import OpenAI
 # 🔐 CONFIGURATION
 # ==========================================
 try:
-    # 1. API KEYS
     NASA_KEY = os.environ.get("NASA_KEY", "").strip()
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
@@ -26,15 +25,11 @@ try:
     ADMIN_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     GUARDIAN_ID = os.environ.get("GUARDIAN_CHAT_ID", "").strip()
     
-    # Filter out empty IDs
+    # Combined list for broadcast
     RECIPIENT_LIST = [id_ for id_ in [ADMIN_ID, GUARDIAN_ID] if id_]
 
     if not all([NASA_KEY, TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, OPENROUTER_API_KEY]):
         print("⚠️ CRITICAL: Missing API Keys.")
-        
-    if not RECIPIENT_LIST:
-        print("⚠️ CRITICAL: No Recipient IDs found in Environment Variables.")
-
 except Exception as e:
     print(f"Config Error: {e}")
 
@@ -186,7 +181,7 @@ def get_gk2a_fires():
     return fires
 
 # ==========================================
-# 🧠 SMART DATABASE
+# 🧠 SMART DATABASE (SANITIZED & DEBUGGED)
 # ==========================================
 def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidence):
     search_radius = 0.025 if "GK2A" in source else 0.001
@@ -253,14 +248,19 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
             }
             
             r_post = db_session.post(f"{SUPABASE_URL}/rest/v1/fires", json=payload, timeout=10)
+            if r_post.status_code not in [200, 201]:
+                print(f"   ❌ UPLOAD FAILED: {r_post.status_code}")
+                print(f"   ⚠️ REASON: {r_post.text}")
+            
             return True 
 
     except Exception as e:
         print(f"DB Error: {e}")
+        time.sleep(1) 
         return False
 
 # ==========================================
-# 🤖 AI ANALYST & BROADCAST
+# 🤖 AI ANALYST & ALERTS
 # ==========================================
 def analyze_with_ai(lat, lon, region, frp):
     try:
@@ -278,17 +278,18 @@ def send_telegram_broadcast(msg):
     print(f"🚀 Broadcasting Alert to {len(RECIPIENT_LIST)} targets...")
     for user_id in RECIPIENT_LIST:
         try:
-            requests.post(url, json={"chat_id": user_id, "text": msg}, timeout=5)
-        except: pass
+            requests.post(url, json={"chat_id": user_id, "text": msg}, timeout=10)
+        except Exception as e:
+            print(f"   ❌ Fail: {e}")
 
 # ==========================================
-# 🚀 SCAN ENGINE
+# 🚀 SATARK V13.6 (24/7 SENTINEL)
 # ==========================================
 def scan_sector():
-    print(f"\n🚀 SATARK SENTINEL | {datetime.now().strftime('%H:%M:%S')}")
+    print(f"\n🚀 SATARK V13.6 SENTINEL | {datetime.now().strftime('%H:%M:%S')}")
     all_fires = []
 
-    # 1. POLAR
+    # 1. POLAR (NASA)
     base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
     nasa_sats = {
         "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOX_NASA}/1",
@@ -297,6 +298,7 @@ def scan_sector():
     }
     
     for sat_name, url in nasa_sats.items():
+        print(f"📡 Scanning {sat_name}...", end=" ")
         try:
             r = requests.get(url, timeout=30)
             if r.status_code == 200:
@@ -307,9 +309,10 @@ def scan_sector():
                     if 'frp' not in df.columns: df['frp'] = 0.0
                     df['conf_score'] = "100%"
                     all_fires.append(df)
+                    print(f"✅ {len(df)} Points")
         except: pass
 
-    # 2. GEO
+    # 2. GEO (GK-2A)
     gk_data = get_gk2a_fires()
     if gk_data: all_fires.append(pd.DataFrame(gk_data))
 
@@ -317,13 +320,13 @@ def scan_sector():
         print("✅ Sector Clear.")
         return
 
-    # OG FIX: Clean empty DataFrames before concat
-    all_fires = [df for df in all_fires if not df.empty]
-    if not all_fires:
+    # Standardized Merge Logic
+    active_dfs = [df for df in all_fires if not df.empty]
+    if not active_dfs:
         print("✅ Sector Clear.")
         return
 
-    merged = pd.concat(all_fires, ignore_index=True)
+    merged = pd.concat(active_dfs, ignore_index=True)
     print(f"📊 Processing {len(merged)} Events...")
     
     for _, f in merged.iterrows():
