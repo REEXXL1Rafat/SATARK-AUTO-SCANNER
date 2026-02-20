@@ -11,9 +11,7 @@ from botocore.config import Config
 from datetime import datetime, timedelta
 from openai import OpenAI
 
-# ==========================================
-# 🔐 CONFIGURATION
-# ==========================================
+# --- ENV & API CONFIG ---
 try:
     NASA_KEY = os.environ.get("NASA_KEY", "").strip()
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -21,15 +19,13 @@ try:
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
     OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 
-    # 2. RECIPIENT LIST (From GitHub Secrets)
     ADMIN_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     GUARDIAN_ID = os.environ.get("GUARDIAN_CHAT_ID", "").strip()
     
-    # Combined list for broadcast
     RECIPIENT_LIST = [id_ for id_ in [ADMIN_ID, GUARDIAN_ID] if id_]
 
     if not all([NASA_KEY, TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_KEY, OPENROUTER_API_KEY]):
-        print("⚠️ CRITICAL: Missing API Keys.")
+        print("CRITICAL: Missing API Keys. Halting.")
 except Exception as e:
     print(f"Config Error: {e}")
 
@@ -38,12 +34,10 @@ client = OpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-# 🌍 INDIA BOUNDING BOX
+# India bounding box (lon_min, lat_min, lon_max, lat_max)
 INDIA_BOX_NASA = "68,6,98,38"
 
-# ==========================================
-# 🔌 ROBUST DATABASE SESSION
-# ==========================================
+# --- DB SESSION & RETRY LOGIC ---
 db_session = requests.Session()
 retries = Retry(total=5, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
 db_session.mount('https://', HTTPAdapter(max_retries=retries))
@@ -53,18 +47,15 @@ db_session.headers.update({
     "Content-Type": "application/json"
 })
 
-# ==========================================
-# 🗺️ REGION INTELLIGENCE
-# ==========================================
+# --- GEO-TAGGING ---
 def get_region_tag(lat, lon):
     if 21.5 <= lat <= 27.3 and 85.8 <= lon <= 89.9: return "WEST_BENGAL"
     if 28.4 <= lat <= 32.5 and 73.8 <= lon <= 77.8: return "PUNJAB_HARYANA"
     if 28.0 <= lat <= 28.9 and 76.8 <= lon <= 77.5: return "DELHI_NCR"
     return "INDIA_OTHER"
 
-# ==========================================
-# 🕵️‍♂️ OSM VERIFICATION (NOISE FILTER)
-# ==========================================
+# --- SEMANTIC FILTER (OVERPASS API) ---
+# Filters out industrial/water false positives from thermal data
 def verify_land_use(lat, lon, region, frp):
     if region != "WEST_BENGAL" and frp < 20.0: 
         return "UNVERIFIED (Quota Saved)"
@@ -99,17 +90,14 @@ def verify_land_use(lat, lon, region, frp):
     except:
         return "UNKNOWN"
 
-# ==========================================
-# 🛰️ GEOSTATIONARY ENGINE (WITH BACKFILL)
-# ==========================================
+# --- GEOSTATIONARY INFERENCE (GK-2A BACKFILL) ---
 def get_gk2a_fires():
-    print("📡 Connecting to GK-2A (Real-Time AWS)...")
+    print("Connecting to GK-2A (Real-Time AWS)...")
     fires = []
     
     try:
         s3 = boto3.client('s3', region_name='us-east-1', config=Config(signature_version=UNSIGNED))
         bucket = 'noaa-gk2a-pds'
-        
         now = datetime.utcnow()
         
         def list_files(dt):
@@ -119,17 +107,17 @@ def get_gk2a_fires():
         resp = list_files(now)
         
         if 'Contents' not in resp:
-            print(f"   ⚠️ No data for {now.strftime('%H')}:00. Checking backfill...")
+            print(f"WARN: No data for {now.strftime('%H')}:00. Checking backfill...")
             prev_hour = now - timedelta(hours=1)
             resp = list_files(prev_hour)
 
         if 'Contents' not in resp:
-            print("   ❌ GK-2A Blind: No Data on AWS for last 2 hours.")
+            print("ERR: GK-2A Blind. No Data on AWS for last 2 hours.")
             return []
             
         latest_key = resp['Contents'][-1]['Key']
         filename = latest_key.split('/')[-1]
-        print(f"   ⬇️ Downloading: {filename} (~50MB)...")
+        print(f"Downloading telemetry: {filename} (~50MB)...")
         
         s3.download_file(bucket, latest_key, "gk2a_temp.nc")
         
@@ -151,10 +139,11 @@ def get_gk2a_fires():
         offset = getattr(data_var, 'add_offset', 0.0)
         temps = raw_data * scale + offset
         
+        # Isolate India Sector
         india_sector = temps[800:2500, 500:2000] 
         hot_indices = np.argwhere(india_sector > 312.0)
         
-        print(f"   🔥 Thermal Anomalies: {len(hot_indices)}")
+        print(f"Thermal Anomalies Detected: {len(hot_indices)}")
         
         for y, x in hot_indices:
             real_y = y + 800
@@ -176,13 +165,11 @@ def get_gk2a_fires():
         if os.path.exists("gk2a_temp.nc"): os.remove("gk2a_temp.nc")
         
     except Exception as e:
-        print(f"   ⚠️ GK-2A Error: {e}")
+        print(f"GK-2A Subsystem Error: {e}")
     
     return fires
 
-# ==========================================
-# 🧠 SMART DATABASE (SANITIZED & DEBUGGED)
-# ==========================================
+# --- SUPABASE DATA INGESTION ---
 def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidence):
     search_radius = 0.025 if "GK2A" in source else 0.001
     lat_min, lat_max = lat - search_radius, lat + search_radius
@@ -216,7 +203,7 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
         clean_lon = safe_float(lon)
 
         if match:
-            print(f"   🔄 Merging with Event {match['id']}...")
+            print(f"Merging with existing event {match['id']}...")
             row_id = match['id']
             old_src = match.get('source', '')
             new_source = old_src if source in old_src else f"{old_src}, {source}"
@@ -249,8 +236,7 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
             
             r_post = db_session.post(f"{SUPABASE_URL}/rest/v1/fires", json=payload, timeout=10)
             if r_post.status_code not in [200, 201]:
-                print(f"   ❌ UPLOAD FAILED: {r_post.status_code}")
-                print(f"   ⚠️ REASON: {r_post.text}")
+                print(f"UPLOAD FAILED: {r_post.status_code} | {r_post.text}")
             
             return True 
 
@@ -259,9 +245,7 @@ def save_fire_event_smart(lat, lon, source, cluster_size, region, frp, confidenc
         time.sleep(1) 
         return False
 
-# ==========================================
-# 🤖 AI ANALYST & ALERTS
-# ==========================================
+# --- LLM ALERT VALIDATION ---
 def analyze_with_ai(lat, lon, region, frp):
     try:
         prompt = f"TASK: Alert. COORDS: {lat},{lon}. REGION: {region}. FRP: {frp}MW. Check if inside India. If yes, 10-word summary."
@@ -275,21 +259,19 @@ def analyze_with_ai(lat, lon, region, frp):
 
 def send_telegram_broadcast(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    print(f"🚀 Broadcasting Alert to {len(RECIPIENT_LIST)} targets...")
+    print(f"Broadcasting Alert to {len(RECIPIENT_LIST)} targets...")
     for user_id in RECIPIENT_LIST:
         try:
             requests.post(url, json={"chat_id": user_id, "text": msg}, timeout=10)
         except Exception as e:
-            print(f"   ❌ Fail: {e}")
+            print(f"Broadcast Fail: {e}")
 
-# ==========================================
-# 🚀 SATARK V13.6 (24/7 SENTINEL)
-# ==========================================
+# --- MAIN INFERENCE LOOP ---
 def scan_sector():
-    print(f"\n🚀 SATARK V13.6 SENTINEL | {datetime.now().strftime('%H:%M:%S')}")
+    print(f"\n--- SATARK V13.6 CRON INIT | {datetime.now().strftime('%H:%M:%S')} ---")
     all_fires = []
 
-    # 1. POLAR (NASA)
+    # 1. POLAR (NASA FIRMS)
     base_url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
     nasa_sats = {
         "VIIRS_SNPP": f"{base_url}/{NASA_KEY}/VIIRS_SNPP_NRT/{INDIA_BOX_NASA}/1",
@@ -298,7 +280,7 @@ def scan_sector():
     }
     
     for sat_name, url in nasa_sats.items():
-        print(f"📡 Scanning {sat_name}...", end=" ")
+        print(f"Pulling {sat_name} telemetry...", end=" ")
         try:
             r = requests.get(url, timeout=30)
             if r.status_code == 200:
@@ -309,7 +291,7 @@ def scan_sector():
                     if 'frp' not in df.columns: df['frp'] = 0.0
                     df['conf_score'] = "100%"
                     all_fires.append(df)
-                    print(f"✅ {len(df)} Points")
+                    print(f"SUCCESS ({len(df)} Points)")
         except: pass
 
     # 2. GEO (GK-2A)
@@ -317,17 +299,17 @@ def scan_sector():
     if gk_data: all_fires.append(pd.DataFrame(gk_data))
 
     if not all_fires:
-        print("✅ Sector Clear.")
+        print("Sector Clear. Sleeping.")
         return
 
     # Standardized Merge Logic
     active_dfs = [df for df in all_fires if not df.empty]
     if not active_dfs:
-        print("✅ Sector Clear.")
+        print("Sector Clear. Sleeping.")
         return
 
     merged = pd.concat(active_dfs, ignore_index=True)
-    print(f"📊 Processing {len(merged)} Events...")
+    print(f"Processing {len(merged)} potential events...")
     
     for _, f in merged.iterrows():
         lat, lon = f['latitude'], f['longitude']
@@ -343,10 +325,11 @@ def scan_sector():
         
         if is_new:
             if region == "WEST_BENGAL" or frp > 50.0:
-                print(f"   🔥 ALERT: {region} | {frp}MW")
+                print(f"TRIGGER: {region} | {frp}MW")
                 ai_msg = analyze_with_ai(lat, lon, region, frp)
                 if "FOREIGN" not in ai_msg:
-                    msg = f"🔥 SATARK ALERT\n📍 {region}\n⚡ {frp:.1f} MW\n🤖 {ai_msg}\n🔗 https://maps.google.com/?q={lat},{lon}"
+                   
+                    msg = f"🔥 [SATARK ALERT]\n📍 {region}\n⚡ {frp:.1f} MW\n🤖 {ai_msg}\n🔗 https://maps.google.com/?q={lat},{lon}"
                     send_telegram_broadcast(msg)
 
 if __name__ == "__main__":
