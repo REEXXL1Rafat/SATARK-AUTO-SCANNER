@@ -14,6 +14,11 @@
 
 ---
 
+> ⚠️ **STATUS: UPGRADED TO SATARK PRIME (PHASE 2)**
+> *This repository contains the SATARK Alpha Engine (Dec 2025). Alpha successfully proved the "Latency Gap" by bypassing 4-hour government delays using cron-loops and LLM semantic filtering.*
+> 
+> *As of February 2026, the system has evolved into **SATARK Prime** (Closed Source / Pre-Deployment). Prime replaces this backend with a Cascaded SwinIR Vision Transformer, NDVI transition tracking, and a physical ESP8266/LoRa IoT ground network. Prime is currently under executive mandate for a live Phase 2 Boro Harvest pilot in West Bengal.*
+
 ## 🚀 The Engine
 **SATARK** (Sanskrit for *Alert*) is an autonomous "Hybrid Intelligence" network designed to provide high-frequency, verifiable climate data where state systems remain "legally blind". While national sensors suffer from 4-6 hour communication lags, SATARK utilizes a real-time **Detect-Verify-Quantify** loop to identify decentralized "micro-fires" (<50MW) often omitted from global datasets.
 
